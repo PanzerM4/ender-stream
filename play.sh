@@ -2,8 +2,7 @@
 cd /radio
 
 # Запускаем обязательную веб-обманку для Render
-python3 -m http.server 10000 & find . -maxdepth 1 -name "*.mp3" | shuf > list.txt && sed -i "s|^\./|file '|;s|$|'|" list.txt && ffmpeg -re -f concat -safe 0 -i list.txt -f lavfi -i color=c=black:s=1920x1080 -filter_complex "[1:v]scale=1920:1080[v_out]" -map "[v_out]" -map 0:a -c:v libx264 -preset ultrafast -tune stillimage -b:v 4500k -maxrate 4500k -bufsize 9000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 320k -ar 44100 -f flv "rtmp://://youtube.com"
-
+python3 -m http.server 10000 & find . -maxdepth 1 -name "*.mp3" | shuf > list.txt && sed -i "s|^\./|file '|;s|$|'|" list.txt && ffmpeg -re -f concat -safe 0 -i list.txt -loop 1 -f image2 -vcodec mjpeg -i bg.jpg -map 1:v -map 0:a -c:v libx264 -preset ultrafast -tune stillimage -crf 35 -b:v 1500k -maxrate 1500k -bufsize 3000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 192k -ar 44100 -f flv "rtmp://://youtube.com"
 
 while true; do
   echo "Перемешиваем список треков..."

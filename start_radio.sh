@@ -11,26 +11,26 @@ pkill -9 -f "ffprobe" || true
 pkill -9 -f "http.server" || true
 rm -f playlist.txt
 
-# Веб-заглушка для Render
+# Фоновая заглушка для Render
 python3 -m http.server 10000 >/dev/null 2>&1 &
 
 echo "Сборка музыкальной базы..."
 find . -maxdepth 1 -name "*.mp3" | shuf > raw_list.txt
 
-# Генерируем плейлист для concat без лишней нагрузки
+# Генерируем плейлист
 while IFS= read -r track_path; do
   echo "file '$CD_DIR/$(basename "$track_path")'" >> playlist.txt
 done < raw_list.txt
 rm -f raw_list.txt
 
-echo "Запуск ультра-эффективного стрима..."
+echo "Запуск стабильного стрима на YouTube..."
 while true; do
-  # ЖЕСТКИЙ ПУТЬ: Ваш ключ трансляции вставлен прямо в адрес без переменных
+  # ИСПРАВЛЕНО: -r 5 (5 кадров/сек) и -g 10 дают YouTube стабильный поток данных
   ffmpeg -v error -nostdin -y \
-    -loop 1 -r 1 -i bg.jpg \
+    -loop 1 -r 5 -i bg.jpg \
     -f concat -safe 0 -stream_loop -1 -i playlist.txt \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 38 -b:v 50k -maxrate 50k -bufsize 1000k \
-    -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 -ac 2 \
+    -c:v libx264 -preset ultrafast -tune stillimage -crf 35 -b:v 200k -maxrate 200k -bufsize 1000k \
+    -pix_fmt yuv420p -g 10 -c:a aac -b:a 128k -ar 44100 -ac 2 \
     -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."

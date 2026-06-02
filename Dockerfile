@@ -5,4 +5,3 @@ COPY . .
 RUN chmod +x play.sh
 EXPOSE 10000
 CMD ["./play.sh"]
-

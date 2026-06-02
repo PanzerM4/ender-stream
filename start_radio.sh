@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Полное cutoff интерактивного ввода на уровне самого ffmpeg
+# Полное отключение интерактивного ввода на уровне самого ffmpeg
 export FFMPEG_FORCE_TEXT_STATUS=1
 
 CD_DIR="/radio"
@@ -18,7 +18,7 @@ touch metadata.txt
 # Фоновая заглушка для Render
 python3 -m http.server 10000 >/dev/null 2>&1 &
 
-# ФОНОВЫЙ ПРОЦЕСС: Синхронизированная выдача звука
+# ФОНОВЫЙ ПРОЦЕСС: Синхронизированная выдача звука в реальном времени
 (
   while true; do
     find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
@@ -39,8 +39,7 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
       echo "$display_name" > metadata.txt
       echo "NOW_PLAYING: $display_name"
       
-      # ИСПРАВЛЕНО: Добавлен флаг -re перед -i "$track_path".
-      # Теперь фоновый декодер отдает аудио строго в реальном времени. Труба больше не переполнится.
+      # Флаг -re здесь заставляет трек проигрываться секунда в секунду, предотвращая обрывы на середине песни
       ffmpeg -v error -nostdin -re -i "$track_path" -f lavfi -i anullsrc=r=44100:cl=stereo \
         -filter_complex "[0:a][1:a]amix=inputs=2:duration=first,aresample=async=1[aout]" \
         -map "[aout]" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
@@ -52,16 +51,18 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
 while true; do
   echo "Запуск HD-трансляции на YouTube..."
   
+  # ЖЕСТКАЯ ССЫЛКА: Весь адрес прописан текстом, без переменных, без фигурных скобок и опечаток
   ffmpeg -v error -nostdin -y \
     -re -loop 1 -r 1 -i bg.jpg \
     -re -f wav -i audio_pipe \
     -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=(w-tw)/2:y=h-80:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12" \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k \
     -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://://youtube.com{YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/null
+    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3
 done
+
 
 

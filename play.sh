@@ -33,7 +33,7 @@ while true; do
       -map "[v_out]" -map "[a_out]" \
       -c:v libx264 -preset veryfast -b:v 2500k -maxrate 2500k -bufsize 5000k \
       -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -ar 44100 \
-      -f flv "rtmp://://youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" || true
+      -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" || true
 
     sleep 1
   done < shuffle_list.txt

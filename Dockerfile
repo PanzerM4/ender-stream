@@ -4,4 +4,5 @@ WORKDIR /radio
 COPY . .
 RUN chmod +x play.sh
 EXPOSE 10000
-CMD ["./play.sh"]
+# Прописываем правильный адрес YouTube прямо в запуск контейнера
+CMD ["/bin/bash", "-c", "sed -i 's/207.244.75.12/://youtube.com' play.sh && ./play.sh"]

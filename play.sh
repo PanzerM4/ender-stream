@@ -1,7 +1,7 @@
 #!/bin/bash
 cd /radio
 
-# Запускаем обязательную веб-обманку для Render
+# Обязательная веб-обманка для Render
 python3 -m http.server 10000 &
 
 while true; do
@@ -9,7 +9,6 @@ while true; do
   find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
 
   while IFS= read -r track_path; do
-    # Считываем исполнителя и название из MP3 тегов
     artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null)
     title=$(ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null)
 
@@ -21,7 +20,7 @@ while true; do
 
     echo "В эфире: $display_name"
 
-    # СТАТИЧНЫЙ ТЕКСТ: Текст выводится неподвижно по центру экрана внизу (y=h-100)
+    # СТАТИЧНЫЙ ТЕКСТ: Название пишется неподвижно внизу экрана по центру
     ffmpeg -re -loop 1 -i bg.jpg -i "$track_path" \
       -vf "drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='$display_name':x=(w-tw)/2:y=h-100:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=15" \
       -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 1500k -maxrate 1500k -bufsize 3000k \

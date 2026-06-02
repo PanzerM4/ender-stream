@@ -1,10 +1,9 @@
 #!/bin/bash
 cd /radio
 
-# 1. ЗАПУСКАЕМ ОБМАНКУ: Крошечный веб-сервер для прохождения проверки портов на Render
+# Запускаем обманку портов для Render
 python3 -m http.server 10000 &
 
-# 2. Основной бесконечный цикл стрима
 while true; do
   echo "Перемешиваем список треков..."
   find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
@@ -21,6 +20,7 @@ while true; do
 
     echo "В эфире: $display_name"
 
+    # СТРОКА СТРИМА: Здесь адрес написан идеально ровно, а ключ подставится из панели Render
     ffmpeg -re -loop 1 -i bg.jpg -i "$track_path" \
       -vf "drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='$display_name':x=w-mod(t*100\,w+tw):y=h-60:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=10" \
       -c:v libx264 -preset veryfast -b:v 2500k -maxrate 2500k -bufsize 5000k \

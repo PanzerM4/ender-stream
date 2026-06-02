@@ -13,39 +13,46 @@ rm -f audio_pipe metadata.txt
 mkfifo audio_pipe
 touch metadata.txt
 
-# Запуск фонового веб-сервера для Render
+# Запуск фоновой веб-заглушки для Render
 python3 -m http.server 10000 >/dev/null 2>&1 &
 
-# ФОНОВЫЙ ПРОЦЕСС: Непрерывное декодирование аудио с нормализацией формата
+# ФОНОВЫЙ ПРОЦЕСС: Чтение треков и жесткое вытаскивание названий
 (
   while true; do
     find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
     while IFS= read -r track_path; do
-      # Извлекаем метаданные трека
+      
+      # 1. Пытаемся прочитать теги через ffprobe
       artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
       title=$(ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
       
+      # Очищаем переменные от скрытых символов возврата каретки (\r)
+      artist=$(echo "$artist" | tr -d '\r\n')
+      title=$(echo "$title" | tr -d '\r\n')
+
+      # 2. ЖЕЛЕЗНАЯ ПРОВЕРКА: если теги есть — пишем их, если нет — берем имя файла
       if [ -n "$artist" ] && [ -n "$title" ]; then
           display_name="$artist — $title"
       else
-          display_name=$(basename "$track_path" .mp3 | sed 's/_/ /g')
+          # Вырезаем путь и .mp3, заменяя минусы и подчеркивания на пробелы
+          raw_name=$(basename "$track_path" .mp3)
+          display_name=$(echo "$raw_name" | sed 's/[_-]/ /g')
       fi
       
-      # Записываем название трека в файл
+      # Записываем в файл и дублируем в консоль Render для проверки
+      echo "NOW_PLAYING: $display_name"
       echo "$display_name" > metadata.txt
-      echo "В эфире: $display_name"
       
-      # Принудительно конвертируем любой MP3 в стандартный поток 44100Hz Стерео на лету
+      # Перекодируем трек в пайп
       ffmpeg -v error -nostdin -i "$track_path" -af "aresample=async=1" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
     done < shuffle_list.txt
   done
 ) &
 
-# ГЛАВНЫЙ ПРОЦЕСС: Постоянный стриминг на YouTube
+# ГЛАВНЫЙ ПРОЦЕСС: Стрим на YouTube
 while true; do
   echo "Запуск трансляции на YouTube..."
   
-  # Читаем аудио из пайпа, а текст динамически обновляем из файла metadata.txt
   ffmpeg -v error -nostdin -y \
     -loop 1 -r 2 -i bg.jpg \
     -f wav -i audio_pipe \
@@ -57,3 +64,4 @@ while true; do
   echo "Стрим упал. Перезапуск через 3 секунды..."
   sleep 3
 done
+

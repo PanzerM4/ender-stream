@@ -5,7 +5,7 @@ export FFMPEG_FORCE_TEXT_STATUS=1
 CD_DIR="/radio"
 cd "$CD_DIR"
 
-# Очистка памяти
+# Полная очистка памяти от старых процессов
 pkill -9 -f "ffmpeg" || true
 pkill -9 -f "ffprobe" || true
 pkill -9 -f "http.server" || true
@@ -36,31 +36,25 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
       echo "$display_name" > metadata.txt
       echo "NOW_PLAYING: $display_name"
       
+      # Подмешиваем тишину, чтобы пайп никогда не закрывался при смене трека
       ffmpeg -v error -nostdin -i "$track_path" -f lavfi -i anullsrc=r=44100:cl=stereo -filter_complex "[0:a][1:a]amix=inputs=2:duration=first,aresample=async=1[aout]" -map "[aout]" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
     done < shuffle_list.txt
   done
 ) &
 
-# ГЛАВНЫЙ ПРОЦЕСС: Стрим HD 720p со строгой синхронизацией real-time (1.0x)
+# ГЛАВНЫЙ ПРОЦЕСС: Стрим HD 720p со строгой синхронизацией времени (1.0x)
 while true; do
   echo "Запуск HD-трансляции на YouTube..."
   
-  # НАСТРОЙКИ: 
-  # -r 1 снижает нагрузку на CPU до минимума, возвращая стабильное HD качество без прыжков.
-  # -re перед аудио синхронизирует поток строго 1 сек видео к 1 сек времени.
-  # В блок drawtext добавлено расположение: x=40:y=h-120 (левый нижний угол над волнами).
+  # Эквалайзер убран. Видеофильтр теперь просто масштабирует картинку и пишет текст.
+  # Координаты x=40:y=h-80 удерживают название песни в левом нижнем углу.
   ffmpeg -v error -nostdin -y \
     -loop 1 -r 1 -i bg.jpg \
     -re -f wav -i audio_pipe \
-    -filter_complex "[1:a]asplit[audio_out][audio_vis]; \
-                     [audio_vis]showwaves=s=1280x60:mode=cline:colors=white@0.5:r=1[waves]; \
-                     [0:v]scale=1280:720[bg]; \
-                     [bg][waves]overlay=x=0:y=H-h[v_waves]; \
-                     [v_waves]drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=40:y=h-120:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10[video_out]" \
-    -map "[video_out]" -map "[audio_out]" \
+    -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=40:y=h-80:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10" \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k \
     -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 \
-      
+       
     -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."

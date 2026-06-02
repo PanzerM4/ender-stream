@@ -1,7 +1,7 @@
 #!/bin/bash
 cd /radio
 
-# Обязательная веб-обманка для Render
+# Обязательная веб-обманку для Render
 python3 -m http.server 10000 &
 
 while true; do
@@ -20,7 +20,7 @@ while true; do
 
     echo "В эфире: $display_name"
 
-    # СТАТИЧНЫЙ ТЕКСТ: Название пишется неподвижно внизу экрана по центру
+    # Выводим красивый неподвижный текст по центру экрана внизу (y=h-100)
     ffmpeg -re -loop 1 -i bg.jpg -i "$track_path" \
       -vf "drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='$display_name':x=(w-tw)/2:y=h-100:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=15" \
       -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 1500k -maxrate 1500k -bufsize 3000k \
@@ -30,5 +30,6 @@ while true; do
     sleep 1
   done < shuffle_list.txt
 done
+
 
 

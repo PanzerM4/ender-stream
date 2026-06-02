@@ -31,7 +31,7 @@ while true; do
     -f concat -safe 0 -stream_loop -1 -i playlist.txt \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 35 -b:v 200k -maxrate 200k -bufsize 1000k \
     -pix_fmt yuv420p -g 10 -c:a aac -b:a 128k -ar 44100 -ac 2 \
-    -f flv "rtmp://://youtube.com" < /dev/null
+    -f flv "rtmp://://youtube.com${YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3

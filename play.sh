@@ -2,7 +2,7 @@
 cd /radio
 
 # Запускаем обязательную веб-обманку для Render
-python3 -m http.server 10000 & find . -maxdepth 1 -name "*.mp3" | shuf > list.txt && sed -i "s|^\./|file '|;s|$|'|" list.txt && ffmpeg -re -f concat -safe 0 -i list.txt -f lavfi -i color=c=black:s=1280x720 -filter_complex "[0:a]avectorscope=s=400x400:colors=white@0.5:scale=log[v_eq];[1:v][v_eq]overlay=x=(W-w)/2:y=(H-h)/2:shortest=1[v_out]" -map "[v_out]" -map 0:a -c:v libx264 -preset ultrafast -b:v 1200k -maxrate 1200k -bufsize 2400k -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -ar 44100 -f flv "rtmp://://youtube.com"
+python3 -m http.server 10000 & find . -maxdepth 1 -name "*.mp3" | shuf > list.txt && sed -i "s|^\./|file '|;s|$|'|" list.txt && ffmpeg -re -f concat -safe 0 -i list.txt -f lavfi -i color=c=black:s=1280x720 -filter_complex "[0:a]avectorscope=s=400x400:colors=white@0.5:scale=log[v_eq];[1:v][v_eq]overlay=x=(W-w)/2:y=(H-h)/2:shortest=1[v_out]" -map "[v_out]" -map 0:a -c:v libx264 -preset ultrafast -b:v 2500k -maxrate 2500k -bufsize 5000k -pix_fmt yuv420p -g 50 -c:a aac -b:a 192k -ar 44100 -f flv "rtmp://://youtube.com"
 
 while true; do
   echo "Перемешиваем список треков..."

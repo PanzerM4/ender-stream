@@ -1,11 +1,13 @@
-#!/bin/bash
+"#!/bin/bash
 set -e
 
+# Полное отключение интерактивного ввода внутри самого ffmpeg
 export FFMPEG_FORCE_TEXT_STATUS=1
+
 CD_DIR="/radio"
 cd "$CD_DIR"
 
-# Полная очистка памяти от старых процессов
+# Очищаем старые процессы и кэш файлов
 pkill -9 -f "ffmpeg" || true
 pkill -9 -f "ffprobe" || true
 pkill -9 -f "http.server" || true
@@ -21,6 +23,7 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
   while true; do
     find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
     while IFS= read -r track_path; do
+      # Читаем метаданные трека
       artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
       title=$(ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
       
@@ -33,23 +36,30 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
           display_name=$(basename "$track_path" .mp3 | sed 's/[_-]/ /g')
       fi
       
+      # Записываем название в файл и выводим в логи Render
       echo "$display_name" > metadata.txt
       echo "NOW_PLAYING: $display_name"
       
-      # Подмешиваем тишину, чтобы пайп никогда не закрывался при смене трека
-      ffmpeg -v error -nostdin -i "$track_path" -f lavfi -i anullsrc=r=44100:cl=stereo -filter_complex "[0:a][1:a]amix=inputs=2:duration=first,aresample=async=1[aout]" -map "[aout]" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
+      # Конвертируем трек в стандартный поток WAV
+      ffmpeg -v error -nostdin -i "$track_path" -af "aresample=async=1" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
     done < shuffle_list.txt
   done
 ) &
 
-# ГЛАВНЫЙ ПРОЦЕСС: Стрим HD 720p со строгой синхронизацией времени (1.0x)
+# ГЛАВНЫЙ ПРОЦЕСС: Стрим в высоком качестве HD 720p
 while true; do
   echo "Запуск HD-трансляции на YouTube..."
   
-  # ВСЁ В ОДНУ СТРОКУ: Полностью исключает ошибки парсинга символов переноса в Bash
-  ffmpeg -v error -nostdin -y -loop 1 -r 1 -i bg.jpg -re -f wav -i audio_pipe -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=40:y=h-80:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10" -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
+  # ТЕПЕРЬ: scale=1280:720 (HD качество), -r 1 (мизерная нагрузка), -g 2 (стабильный поток для YouTube)
+  # Текст читается на лету из metadata.txt и автоматически обновляется!
+  ffmpeg -v error -nostdin -y \
+    -loop 1 -r 1 -i bg.jpg \
+    -f wav -i audio_pipe \
+    -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=(w-tw)/2:y=h-80:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12" \
+    -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k \
+    -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 \
+    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3
 done
-

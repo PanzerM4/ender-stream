@@ -21,7 +21,7 @@ while true; do
       -vf "drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='$display_name':x=w-mod(t*100\,w+tw):y=h-60:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=10" \
       -c:v libx264 -preset veryfast -b:v 2500k -maxrate 2500k -bufsize 5000k \
       -pix_fmt yuv420p -g 50 -shortest -c:a aac -b:a 128k -ar 44100 \
-      -f flv "rtmp://://youtube.com" || true
+      -f flv "rtmp://youtube.com4ux7-0ay8-816w-cxrb-1j24" || true
 
     sleep 1
   done < shuffle_list.txt

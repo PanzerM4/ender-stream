@@ -25,13 +25,13 @@ rm -f raw_list.txt
 
 echo "Запуск стабильного стрима на YouTube..."
 while true; do
-  # ИСПРАВЛЕНО: -r 5 (5 кадров/сек) и -g 10 дают YouTube стабильный поток данных
+  # БЕЗОПАСНЫЙ АДРЕС: Используем переменную $YOUTUBE_KEY, которую вы указали на Рендере
   ffmpeg -v error -nostdin -y \
     -loop 1 -r 5 -i bg.jpg \
     -f concat -safe 0 -stream_loop -1 -i playlist.txt \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 35 -b:v 200k -maxrate 200k -bufsize 1000k \
     -pix_fmt yuv420p -g 10 -c:a aac -b:a 128k -ar 44100 -ac 2 \
-    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
+    -f flv "rtmp://://youtube.com" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3

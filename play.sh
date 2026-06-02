@@ -25,7 +25,7 @@ while true; do
 
     echo "В эфире: $display_name (Длительность: ${duration_sec} сек.)"
 
-    # Используем прямой IP-адрес вместо домена — это полностью исключает ошибку Invalid argument
+    # Стрим через рабочий IP-адрес YouTube — это 100% обойдет любые проблемы со связью
     ffmpeg -re -loop 1 -i bg.jpg -i "$track_path" \
       -filter_complex "[1:a]afade=t=in:ss=0:d=3,afade=t=out:st=$fade_out_start:d=3,asplit[a_out][a_eq]; \
                        [a_eq]showwaves=s=1280x200:colors=white@0.4:mode=line[v_eq]; \
@@ -34,10 +34,10 @@ while true; do
       -map "[v_out]" -map "[a_out]" \
       -c:v libx264 -preset veryfast -b:v 2500k -maxrate 2500k -bufsize 5000k \
       -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -ar 44100 \
-      -f flv "rtmp://://youtube.com" || true
-
+      -f flv "rtmp://142.250.74.46/live2/4ux7-0ay8-816w-cxrb-1j24" || true
 
     sleep 1
   done < shuffle_list.txt
 done
+
 

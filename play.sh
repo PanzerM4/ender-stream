@@ -34,7 +34,7 @@ while true; do
       -map "[v_out]" -map "[a_out]" \
       -c:v libx264 -preset veryfast -b:v 2500k -maxrate 2500k -bufsize 5000k \
       -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://://youtube.com" || true
+      -f flv "rtmp://://youtube.com" || true
 
 
     sleep 1

@@ -1,7 +1,7 @@
 #!/bin/bash
 cd /radio
 
-# Запускаем обязательную веб-обманку для Render
+# Обязательный веб-сервер для прохождения проверки Render
 python3 -m http.server 10000 &
 
 while true; do
@@ -20,7 +20,7 @@ while true; do
 
     echo "В эфире: $display_name"
 
-    # Прямой адрес без букв youtube.com (исключает любую ошибку Invalid argument)
+    # Используем прямой IP-адрес серверов YouTube, чтобы исключить любые ошибки адресации
     ffmpeg -re -loop 1 -i bg.jpg -i "$track_path" \
       -vf "drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='$display_name':x=w-mod(t*100\,w+tw):y=h-60:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=10" \
       -c:v libx264 -preset veryfast -b:v 2500k -maxrate 2500k -bufsize 5000k \
@@ -30,5 +30,6 @@ while true; do
     sleep 1
   done < shuffle_list.txt
 done
+
 
 

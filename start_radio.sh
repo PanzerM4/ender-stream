@@ -36,31 +36,31 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
       echo "$display_name" > metadata.txt
       echo "NOW_PLAYING: $display_name"
       
-      # ФОКУС: Микшируем трек с бесконечным генератором тишины (anullsrc)
-      # Благодаря этому пайп audio_pipe никогда не закрывается на стыке треков
+      # Фоновый декодер отдаёт аудио без флага -re, чтобы пайп всегда был заполнен
       ffmpeg -v error -nostdin -i "$track_path" -f lavfi -i anullsrc=r=44100:cl=stereo -filter_complex "[0:a][1:a]amix=inputs=2:duration=first,aresample=async=1[aout]" -map "[aout]" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
     done < shuffle_list.txt
   done
 ) &
 
-# ГЛАВНЫЙ ПРОЦЕСС: Стрим HD 720p с эквалайзером и новым расположением текста
+# ГЛАВНЫЙ ПРОЦЕСС: Стрим 720p с фиксацией скорости real-time (1.0x)
 while true; do
   echo "Запуск HD-трансляции на YouTube..."
   
-  # НАСТРОЙКИ ФИЛЬТРОВ:
-  # showwaves — генерирует тонкий полупрозрачный белый эквалайзер высотой 60px в самом низу экрана.
-  # drawtext: x=40:y=h-120 — переносит название песни в ЛЕВЫЙ НИЖНИЙ угол, строго НАД эквалайзером.
+  # КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
+  # -re перед -f wav -i audio_pipe включает чтение строго в реальном времени (секунда в секунду).
+  # -r 25 и -g 50 задают стандартные 25 кадров в секунду для плавного эквалайзера.
   ffmpeg -v error -nostdin -y \
-    -loop 1 -r 5 -i bg.jpg \
-    -f wav -i audio_pipe \
+    -stream_loop -1 -r 25 -i bg.jpg \
+    -re -f wav -i audio_pipe \
     -filter_complex "[1:a]asplit[audio_out][audio_vis]; \
-                     [audio_vis]showwaves=s=1280x60:mode=cline:colors=white@0.5:r=5[waves]; \
+                     [audio_vis]showwaves=s=1280x60:mode=cline:colors=white@0.5:r=25[waves]; \
                      [0:v]scale=1280:720[bg]; \
                      [bg][waves]overlay=x=0:y=H-h[v_waves]; \
                      [v_waves]drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=40:y=h-120:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10[video_out]" \
     -map "[video_out]" -map "[audio_out]" \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 800k -maxrate 800k -bufsize 1600k \
-    -pix_fmt yuv420p -g 10 -c:a aac -b:a 128k -ar 44100 \
+    -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 1000k -maxrate 1000k -bufsize 2000k \
+    -pix_fmt yuv420p -g 50 -c:a aac -b:a 128k -ar 44100 \
+   
     -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."

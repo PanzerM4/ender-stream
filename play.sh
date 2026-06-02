@@ -24,7 +24,7 @@ while true; do
     duration_sec=${duration%.*}
     fade_out_start=$((duration_sec - 3))
 
-    echo "В эфире: $display_name (Длительность: ${duration_sec} сек.)"
+    echo "В эфире: $display_name (Длительность: ${duration_sec} sec.)"
 
     # Запуск трансляции: сглаживание звука (fade), эквалайзер волны (showwaves) и бегущий текст (drawtext)
     ffmpeg -re -loop 1 -i bg.jpg -i "$track_path" \

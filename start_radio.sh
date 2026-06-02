@@ -46,16 +46,8 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
 while true; do
   echo "Запуск HD-трансляции на YouTube..."
   
-  # Эквалайзер убран. Видеофильтр теперь просто масштабирует картинку и пишет текст.
-  # Координаты x=40:y=h-80 удерживают название песни в левом нижнем углу.
-  ffmpeg -v error -nostdin -y \
-    -loop 1 -r 1 -i bg.jpg \
-    -re -f wav -i audio_pipe \
-    -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=40:y=h-80:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10" \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k \
-    -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 \
-       
-    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
+  # ВСЁ В ОДНУ СТРОКУ: Полностью исключает ошибки парсинга символов переноса в Bash
+  ffmpeg -v error -nostdin -y -loop 1 -r 1 -i bg.jpg -re -f wav -i audio_pipe -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=40:y=h-80:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10" -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3

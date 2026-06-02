@@ -7,58 +7,31 @@ export FFMPEG_FORCE_TEXT_STATUS=1
 CD_DIR="/radio"
 cd "$CD_DIR"
 
-# Очищаем старые процессы и кэш файлов
+# Очищаем память от старых зависших процессов
 pkill -9 -f "ffmpeg" || true
 pkill -9 -f "ffprobe" || true
 pkill -9 -f "http.server" || true
-rm -f audio_pipe metadata.txt
-mkfifo audio_pipe
-touch metadata.txt
+rm -f playlist.txt
 
-# Фоновая заглушка для Render
+# Фоновое веб-окно для Render
 python3 -m http.server 10000 >/dev/null 2>&1 &
 
-# ФОНОВЫЙ ПРОЦЕСС: Вытаскивает названия и непрерывно гонит звук
-(
-  while true; do
-    find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
-    while IFS= read -r track_path; do
-      # Читаем метаданные трека
-      artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
-      title=$(ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
-      
-      artist=$(echo "$artist" | tr -d '\r\n')
-      title=$(echo "$title" | tr -d '\r\n')
+echo "Создаем плейлист треков..."
+# Находим все mp3, перемешиваем и форматируем для ffmpeg
+find . -maxdepth 1 -name "*.mp3" | shuf | sed "s|^\./|file '/radio/|; s|$|'|" > playlist.txt
 
-      if [ -n "$artist" ] && [ -n "$title" ]; then
-          display_name="$artist — $title"
-      else
-          display_name=$(basename "$track_path" .mp3 | sed 's/[_-]/ /g')
-      fi
-      
-      # Записываем название в файл и выводим в логи Render
-      echo "$display_name" > metadata.txt
-      echo "NOW_PLAYING: $display_name"
-      
-      # Конвертируем трек в стандартный поток WAV
-      ffmpeg -v error -nostdin -i "$track_path" -af "aresample=async=1" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
-    done < shuffle_list.txt
-  done
-) &
-
-# ГЛАВНЫЙ ПРОЦЕСС: Стрим в высоком качестве HD 720p
 while true; do
-  echo "Запуск HD-трансляции на YouTube..."
+  echo "Запуск стабильной трансляции на YouTube..."
   
-  # ТЕПЕРЬ: scale=1280:720 (HD качество), -r 1 (мизерная нагрузка), -g 2 (стабильный поток для YouTube)
-  # Текст читается на лету из metadata.txt и автоматически обновляется!
+  # ОДИН ПРОЦЕСС FFMPEG: Стрим в качестве 480p с фиксированной надписью.
+  # Это гарантирует, что музыка не будет тормозить на бесплатном сервере.
   ffmpeg -v error -nostdin -y \
-    -loop 1 -r 1 -i bg.jpg \
-    -f wav -i audio_pipe \
-    -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=(w-tw)/2:y=h-80:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12" \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k \
-    -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
+    -loop 1 -r 5 -i bg.jpg \
+    -f concat -safe 0 -stream_loop -1 -i playlist.txt \
+    -vf "scale=854:480,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='RADIO LIVE':x=(w-tw)/2:y=h-50:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=10" \
+    -c:v libx264 -preset ultrafast -tune stillimage -crf 32 -b:v 400k -maxrate 400k -bufsize 800k \
+    -pix_fmt yuv420p -g 15 -c:a aac -b:a 128k -ar 44100 -ac 2 \
+     -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3

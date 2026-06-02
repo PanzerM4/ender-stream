@@ -25,16 +25,14 @@ rm -f raw_list.txt
 
 echo "Запуск ультра-эффективного стрима..."
 while true; do
-  # ФОКУС: -loop 1 и -r 1 выдают ровно 1 кадр в секунду.
-  # -tune stillimage приказывает ffmpeg скопировать картинку один раз и «заморозить» её.
+  # ЖЕСТКИЙ ПУТЬ: Ваш ключ трансляции вставлен прямо в адрес без переменных
   ffmpeg -v error -nostdin -y \
     -loop 1 -r 1 -i bg.jpg \
     -f concat -safe 0 -stream_loop -1 -i playlist.txt \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 38 -b:v 50k -maxrate 50k -bufsize 1000k \
     -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 -ac 2 \
-    -f flv "rtmp://://youtube.com${YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/null
+    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3
 done
-

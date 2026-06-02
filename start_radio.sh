@@ -28,13 +28,11 @@ sleep 2
 
 echo "Запуск трансляции с эквалайзером на YouTube..."
 while true; do
-  # НАСТРОЙКИ ВИЗУАЛИЗАЦИИ:
-  # showwaves=s=1280x80 — создает легкие волны высотой 80 пикселей в самом низу.
-  # mode=cline, colors=white@0.6 — тонкие, полупрозрачные белые линии (не режут глаза).
-  # drawtext: x=30:y=h-130 — сдвигает текст в левый нижний угол, строго НАД эквалайзером.
+  # ДОБАВЛЕН ФЛАГ -vn перед -i concat_list.txt
+  # Он запрещает ffmpeg читать битые обложки из mp3 файлов
   ffmpeg -v error -nostdin -y \
     -loop 1 -r 5 -i bg.jpg \
-    -f concat -safe 0 -stream_loop -1 -i concat_list.txt \
+    -vn -f concat -safe 0 -stream_loop -1 -i concat_list.txt \
     -filter_complex "[1:a]acrossfade=d=3:c1=tri:c2=tri,asplit[audio_out][audio_vis]; \
                      [audio_vis]showwaves=s=1280x80:mode=cline:colors=white@0.6:r=5[waves]; \
                      [0:v]scale=1280:720[bg]; \
@@ -43,7 +41,7 @@ while true; do
     -map "[video_out]" -map "[audio_out]" \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 800k -maxrate 800k -bufsize 1600k \
     -pix_fmt yuv420p -g 10 -c:a aac -b:a 128k -ar 44100 \
-        -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
+    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3

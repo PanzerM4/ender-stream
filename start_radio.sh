@@ -42,7 +42,7 @@ while true; do
     -map "[video_out]" -map "[audio_out]" \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 800k -maxrate 800k -bufsize 1600k \
     -pix_fmt yuv420p -g 10 -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://://youtube.com{YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/null
+    -f flv "rtmp://://youtube.com${YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Полное отключение интерактивного ввода внутри самого ffmpeg
+# Полное cutoff интерактивного ввода на уровне самого ffmpeg
 export FFMPEG_FORCE_TEXT_STATUS=1
 
 CD_DIR="/radio"
@@ -18,7 +18,7 @@ touch metadata.txt
 # Фоновая заглушка для Render
 python3 -m http.server 10000 >/dev/null 2>&1 &
 
-# ФОНОВЫЙ ПРОЦЕСС: Вытаскивает названия и непрерывно гонит звук с подстраховкой тишиной
+# ФОНОВЫЙ ПРОЦЕСС: Синхронизированная выдача звука
 (
   while true; do
     find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
@@ -36,35 +36,32 @@ python3 -m http.server 10000 >/dev/null 2>&1 &
           display_name=$(basename "$track_path" .mp3 | sed 's/[_-]/ /g')
       fi
       
-      # Записываем название в файл и выводим в логи Render
       echo "$display_name" > metadata.txt
       echo "NOW_PLAYING: $display_name"
       
-      # Микшируем трек с бесконечным генератором тишины (anullsrc), чтобы пайп не закрывался на стыках
-      ffmpeg -v error -nostdin -i "$track_path" -f lavfi -i anullsrc=r=44100:cl=stereo \
+      # ИСПРАВЛЕНО: Добавлен флаг -re перед -i "$track_path".
+      # Теперь фоновый декодер отдает аудио строго в реальном времени. Труба больше не переполнится.
+      ffmpeg -v error -nostdin -re -i "$track_path" -f lavfi -i anullsrc=r=44100:cl=stereo \
         -filter_complex "[0:a][1:a]amix=inputs=2:duration=first,aresample=async=1[aout]" \
         -map "[aout]" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
     done < shuffle_list.txt
   done
 ) &
 
-# ГЛАВНЫЙ ПРОЦЕСС: Стрим в высоком качестве HD 720p со скоростью строго 1.0x
+# ГЛАВНЫЙ ПРОЦЕСС: Стрим в высоком качестве HD 720p со скоростью 1.0x
 while true; do
   echo "Запуск HD-трансляции на YouTube..."
   
-  # КРИТИЧЕСКИЕ ИЗМЕНЕНИЯ:
-  # 1. Добавлен флаг -re строго ПЕРЕД -loop 1 -r 1 -i bg.jpg
-  # 2. Добавлен флаг -re строго ПЕРЕД -f wav -i audio_pipe
-  # Это аппаратно синхронизирует и картинку, и звук по системным часам Render.
   ffmpeg -v error -nostdin -y \
     -re -loop 1 -r 1 -i bg.jpg \
     -re -f wav -i audio_pipe \
     -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=(w-tw)/2:y=h-80:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12" \
     -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k \
     -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://://youtube.com${YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/
+    -f flv "rtmp://://youtube.com{YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/null
 
   echo "Переподключение потока через 3 секунды..."
   sleep 3
 done
+
 

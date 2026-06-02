@@ -23,14 +23,8 @@ find . -maxdepth 1 -name "*.mp3" | shuf | sed "s|^\./|file '/radio/|; s|$|'|" > 
 while true; do
   echo "Запуск трансляции на YouTube..."
   
-  # УЛЬТРА-ЛЕГКИЙ РЕЖИМ ДЛЯ СЛАБЫХ СЕРВЕРОВ (2 FPS, разрешение 360p)
-  ffmpeg -v error -nostdin -y \
-    -loop 1 -r 2 -i bg.jpg \
-    -f concat -safe 0 -stream_loop -1 -i playlist.txt \
-    -vf "scale=640:360,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='Radio Live':x=(w-tw)/2:y=h-40:fontsize=18:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=8" \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 35 -b:v 150k -maxrate 150k -bufsize 3000k \
-    -pix_fmt yuv420p -g 4 -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://://youtube.com${YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/null
+  # Всё в одну строку, чтобы исключить любые ошибки с косыми чертами
+  ffmpeg -v error -nostdin -y -loop 1 -r 2 -i bg.jpg -f concat -safe 0 -stream_loop -1 -i playlist.txt -vf "scale=640:360,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:text='Radio Live':x=(w-tw)/2:y=h-40:fontsize=18:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=8" -c:v libx264 -preset ultrafast -tune stillimage -crf 35 -b:v 150k -maxrate 150k -bufsize 3000k -pix_fmt yuv420p -g 4 -c:a aac -b:a 128k -ar 44100 -f flv "rtmp://://youtube.com${YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/null
 
   echo "Стрим упал. Перезапуск через 3 секунды..."
   sleep 3

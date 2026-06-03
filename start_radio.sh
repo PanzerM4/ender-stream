@@ -18,7 +18,7 @@ if [ ! -f bg.jpg ]; then
   exit 1
 fi
 
-# HTTP-заглушка для Render (порт из переменной окружения)
+# HTTP-заглушка для Render
 PORT=${PORT:-10000}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
@@ -26,21 +26,29 @@ trap "kill $HTTP_PID 2>/dev/null" EXIT
 
 echo "=== Радио с плавными переходами и названиями треков ==="
 
-# --- Вспомогательные функции ---
+# --- Функции ---
 
-# Получить название трека (тег title или имя файла)
+# Получить строку "Исполнитель - Название" (или только название, или имя файла)
 get_title() {
   local file="$1"
+  artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
   title=$(ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
-  if [ -z "$title" ]; then
-    title=$(basename "$file" .mp3)
-    title=${title//_/ }
-  fi
-  title=${title//\'/}
-  echo "$title"
+  
+  # Если есть и артист и название
+  if [ -n "$artist" ] && [ -n "$title" ]; then
+    echo "${artist} - ${title}"
+  elif [ -n "$title" ]; then
+    echo "$title"
+  elif [ -n "$artist" ]; then
+    echo "$artist"
+  else
+    # Иначе – имя файла без расширения и без подчёркиваний
+    local name=$(basename "$file" .mp3)
+    echo "${name//_/ }"
+  fi | sed "s/'//g"   # удаляем кавычки, чтобы не сломать drawtext
 }
 
-# Построить аудиофильтр acrossfade (как в рабочем скрипте)
+# Построить аудиофильтр acrossfade
 build_acrossfade_filter() {
   local n=$1
   if [ "$n" -eq 1 ]; then
@@ -49,7 +57,6 @@ build_acrossfade_filter() {
   fi
 
   local filter="[1:a][2:a]acrossfade=d=3:c1=tri:c2=tri[a1]"
-  local i
   for ((i=3; i<=n; i++)); do
     local prev=$((i-2))
     filter+="; [a${prev}][${i}:a]acrossfade=d=3:c1=tri:c2=tri[a$((i-1))]"
@@ -59,7 +66,6 @@ build_acrossfade_filter() {
 }
 
 # Построить видеофильтр с названиями треков
-# Аргументы: start1 end1 title1 start2 end2 title2 ...
 build_video_filter() {
   local args=("$@")
   local n=$(($# / 3))
@@ -79,11 +85,10 @@ build_video_filter() {
   echo "$filter"
 }
 
-# --- Главный бесконечный цикл ---
+# --- Главный цикл ---
 while true; do
   echo "--- Формирую новый плейлист ---"
 
-  # Перемешиваем mp3
   mapfile -t ALL_MP3 < <(ls *.mp3 | shuf 2>/dev/null || ls *.mp3 | sort -R 2>/dev/null || ls *.mp3)
   if [ ${#ALL_MP3[@]} -eq 0 ]; then
     echo "Нет mp3 файлов!"
@@ -113,10 +118,10 @@ while true; do
   n=${#PLAYLIST[@]}
   echo "Выбрано треков: $n, общая длительность: ${TOTAL_DUR} сек."
 
-  # Рассчитываем времена начала/конца для названий (с учётом кроссфейда 3 сек)
+  # Рассчитываем времена начала/конца для названий
   STARTS=()
   ENDS=()
-  cum=${DURATIONS[0]}            # <-- исправлено: убран local
+  cum=${DURATIONS[0]}
   STARTS[0]=0
   ENDS[0]=$cum
 
@@ -135,7 +140,7 @@ while true; do
   done
 
   # Входы: картинка + треки
-  INPUTS=("-loop" "1" "-r" "5" "-i" "bg.jpg")
+  INPUTS=("-loop" "1" "-r" "5" "-i" "bg.jpg")   # картинку подаём с низкой частотой – это нормально
   for f in "${PLAYLIST[@]}"; do
     INPUTS+=("-i" "$f")
   done
@@ -146,8 +151,7 @@ while true; do
 
   FULL_FILTER="${AUDIO_FILTER}; ${VIDEO_FILTER}"
 
-  # RTMP URL
-  YT_KEY="${YT_KEY:-4ux7-0ay8-816w-cxrb-1j24}"   # <-- замени на свой ключ
+  YT_KEY="${YT_KEY:-4ux7-0ay8-816w-cxrb-1j24}"
   RTMP_URL="rtmp://a.rtmp.youtube.com/live2/${YT_KEY}"
 
   echo "Запуск ffmpeg..."
@@ -155,8 +159,9 @@ while true; do
     "${INPUTS[@]}" \
     -filter_complex "$FULL_FILTER" \
     -map "[video_out]" -map "[afinal]" \
+    -r 30 \                           # ← выходная частота 30 fps (YouTube требует ≥24)
     -c:v libx264 -preset ultrafast -tune stillimage -crf 20 -b:v 1500k -maxrate 2000k -bufsize 4000k \
-    -pix_fmt yuv420p -g 10 \
+    -pix_fmt yuv420p -g 60 \          # ← ключевой кадр каждые 2 секунды при 30 fps
     -c:a aac -b:a 128k -ar 44100 \
     -f flv "$RTMP_URL"
 

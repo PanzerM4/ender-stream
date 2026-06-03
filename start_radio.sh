@@ -4,26 +4,37 @@ set -e
 CD_DIR="/radio"
 cd "$CD_DIR"
 
+# Очистка старых процессов
 pkill -9 -f "ffmpeg" || true
 pkill -9 -f "http.server" || true
 
+# Проверка наличия mp3
 if ! ls *.mp3 >/dev/null 2>&1; then
   echo "Нет mp3-файлов в /radio"
   exit 1
 fi
 
+# Создаём чёрный фон, если bg.jpg отсутствует
 if [ ! -f bg.jpg ]; then
   echo "Файл bg.jpg не найден, создаю чёрный фон 1920x1080..."
   ffmpeg -y -f lavfi -i color=c=black:s=1920x1080:r=1 -frames:v 1 bg.jpg 2>/dev/null
+  if [ ! -f bg.jpg ]; then
+    echo "ОШИБКА: не удалось создать bg.jpg"
+    exit 1
+  fi
 fi
 
+# HTTP-заглушка для Render
 PORT=${PORT:-10000}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-echo "=== Радио с названиями треков (CBR) ==="
+echo "=== Радио с названиями треков (CBR, крупный шрифт) ==="
 
+# --- Функции ---
+
+# Получение строки "Исполнитель - Название"
 get_title() {
   local file="$1"
   artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
@@ -39,6 +50,7 @@ get_title() {
   fi | sed "s/'//g"
 }
 
+# Генерация плейлиста и расчёт времени показа названий
 generate_playlist_and_timings() {
   local target_sec=$1
   local total_dur=0
@@ -47,6 +59,7 @@ generate_playlist_and_timings() {
   ENDS=()
   TITLES=()
 
+  # Перемешиваем mp3
   mapfile -t ALL_MP3 < <(ls *.mp3 | shuf 2>/dev/null || ls *.mp3 | sort -R 2>/dev/null || ls *.mp3)
 
   for f in "${ALL_MP3[@]}"; do
@@ -55,9 +68,9 @@ generate_playlist_and_timings() {
     [ "$DUR" -le 0 ] && continue
     PLAYLIST+=("$f")
     TITLES+=("$(get_title "$f")")
-    STARTS+=("$total_dur")
+    STARTS+=("$total_dur")          # начало названия = текущая суммарная длительность
     total_dur=$((total_dur + DUR))
-    ENDS+=("$total_dur")
+    ENDS+=("$total_dur")            # конец названия = после окончания трека
     if [ $total_dur -ge $target_sec ]; then
       break
     fi
@@ -65,6 +78,7 @@ generate_playlist_and_timings() {
   TOTAL_TIME=$total_dur
 }
 
+# --- Главный цикл ---
 while true; do
   echo "--- Формирую новый плейлист (~4 часа) ---"
   TARGET_SEC=$((4*3600))
@@ -78,17 +92,19 @@ while true; do
   fi
   echo "Выбрано треков: $n, общая длительность: ${TOTAL_TIME} сек."
 
+  # Строим видеофильтр с крупным шрифтом (32)
   VIDEO_FILTER="[0:v]scale=1280:720[bg]"
   prev="bg"
   for ((i=0; i<n; i++)); do
     s="${STARTS[$i]}"
     e="${ENDS[$i]}"
     title="${TITLES[$i]}"
-    VIDEO_FILTER+="; [${prev}]drawtext=text='${title}':x=30:y=h-80:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:enable='between(t,${s},${e})'[txt${i}]"
+    VIDEO_FILTER+="; [${prev}]drawtext=text='${title}':x=30:y=h-80:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:enable='between(t,${s},${e})'[txt${i}]"
     prev="txt${i}"
   done
   VIDEO_FILTER+="; [${prev}]format=yuv420p[video_out]"
 
+  # Плейлист для concat demuxer
   PLAYLIST_FILE="playlist_$$.txt"
   for f in "${PLAYLIST[@]}"; do
     echo "file '$(pwd)/$f'" >> "$PLAYLIST_FILE"
@@ -107,7 +123,7 @@ while true; do
     -filter_complex "$VIDEO_FILTER" \
     -map "[video_out]" -map 1:a \
     -r 30 \
-    -c:v libx264 -preset ultrafast -tune stillimage \
+    -c:v libx264 -preset ultrafast \
     -b:v 3000k -minrate 3000k -maxrate 3000k -bufsize 6000k \
     -pix_fmt yuv420p -g 60 \
     -c:a aac -b:a 128k -ar 44100 \

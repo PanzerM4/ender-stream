@@ -22,7 +22,7 @@ python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-echo "=== Радио с названиями треков (CBR + nal-hrd) ==="
+echo "=== Радио с названиями треков (CBR + nal-hrd + стабильный поток) ==="
 
 get_title() {
   local file="$1"
@@ -100,7 +100,7 @@ while true; do
 
   echo "Запуск ffmpeg на ${RTMP_URL} ..."
   ffmpeg -v error -nostdin -y \
-    -f image2 -loop 1 -r 5 -i bg.jpg \
+    -re -f image2 -loop 1 -framerate 30 -i bg.jpg \
     -re -f concat -safe 0 -i "$PLAYLIST_FILE" \
     -filter_complex "$VIDEO_FILTER" \
     -map "[video_out]" -map 1:a \
@@ -110,6 +110,8 @@ while true; do
     -x264-params "nal-hrd=cbr:force-cfr=1" \
     -pix_fmt yuv420p -g 60 \
     -c:a aac -b:a 128k -ar 44100 \
+    -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 10 \
+    -rtmp_live live \
     -f flv "$RTMP_URL"
 
   rm -f "$PLAYLIST_FILE"

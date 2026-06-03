@@ -12,16 +12,14 @@ if ! ls *.mp3 >/dev/null 2>&1; then
   exit 1
 fi
 
-# Проверка и авто-создание фона (оставляем, хуже не будет)
-if [ -f bg.jpg ]; then
-  SIG=$(head -c 3 bg.jpg | xxd -p)
-  if [ "$SIG" != "ffd8ff" ]; then
-    echo "ВНИМАНИЕ: bg.jpg не JPEG (сигнатура $SIG), создаю чёрный фон"
-    rm -f bg.jpg
-  fi
-fi
+# Фон: если нет bg.jpg – создаём чёрный, иначе используем существующий
 if [ ! -f bg.jpg ]; then
+  echo "bg.jpg отсутствует, создаю чёрный фон..."
   ffmpeg -y -f lavfi -i color=c=black:s=1920x1080:r=1 -frames:v 1 bg.jpg 2>/dev/null
+  if [ ! -f bg.jpg ]; then
+    echo "ОШИБКА: не удалось создать bg.jpg"
+    exit 1
+  fi
 fi
 
 PORT=${PORT:-10000}
@@ -123,7 +121,6 @@ while true; do
     VIDEO_ARGS+=("${STARTS[$i]}" "${ENDS[$i]}" "${TITLES[$i]}")
   done
 
-  # Явно указываем формат image2 для bg.jpg
   INPUTS=("-f" "image2" "-loop" "1" "-r" "5" "-i" "bg.jpg")
   for f in "${PLAYLIST[@]}"; do
     INPUTS+=("-i" "$f")

@@ -4,125 +4,119 @@ set -euo pipefail
 CD_DIR="/radio"
 cd "$CD_DIR"
 
-# Проверка ключа YouTube
-if [ -z "${YT_KEY:-}" ]; then
-  echo "❌ Переменная окружения YT_KEY не задана!"
-  exit 1
-fi
-
-# Остановка старых процессов ffmpeg
+# ------------------------------------------------------------
+# 1. Принудительная зачистка всего, что могло остаться
+# ------------------------------------------------------------
+# Убиваем все ffmpeg и python-серверы безжалостно
 pkill -9 -f "ffmpeg" || true
+pkill -9 -f "http.server" || true
+pkill -9 -f "simple_ping_server" || true
+pkill -9 -f "playlist_feeder" || true
 
-# --- НАЧАЛО: Запуск минимального HTTP-сервера для пинга ---
+# Освобождаем порт (убиваем любой процесс, который его слушает)
 PORT=${PORT:-10000}
-
-# Проверяем, занят ли порт (опционально, но полезно)
-if lsof -Pi :$PORT -sTCP:LISTEN -t >/dev/null 2>&1; then
-  echo "⚠️ Порт $PORT занят. Пытаемся остановить связанные процессы..."
-  lsof -ti:$PORT | xargs kill -9 2>/dev/null || true
-  sleep 2
+if command -v fuser &>/dev/null; then
+    fuser -k ${PORT}/tcp || true
+elif command -v lsof &>/dev/null; then
+    lsof -ti:${PORT} | xargs -r kill -9
 fi
+sleep 1  # даём системе время освободить сокет
 
-# Создаем простой скрипт для HTTP-сервера
-cat << 'EOF' > /tmp/simple_ping_server.py
-import http.server
-import socketserver
-import os
-from http import HTTPStatus
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(HTTPStatus.OK)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-        self.wfile.write(b'OK\n')
-
-    # Обработка других методов (POST, HEAD и т.д.) также возвращает 200 OK
-    def do_HEAD(self):
-        self.send_response(HTTPStatus.OK)
-        self.send_header('Content-type', 'text/plain')
-        self.end_headers()
-
-    def do_POST(self):
-        self.do_GET() # Для пинга POST можно обрабатывать как GET
-
-    def log_message(self, format, *args):
-        # Отключаем логирование запросов для чистоты stdout
-        pass
-
-if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 10000))
-    with socketserver.TCPServer(("", port), Handler) as httpd:
-        print(f"Ping server running on port {port}")
-        httpd.serve_forever()
-EOF
-
-# Функция для завершения процессов
-cleanup() {
-    echo "🧹 Завершение процессов..."
-    # Убиваем HTTP-сервер по PID
-    if [[ -n "${HTTP_PID:-}" ]]; then
-        kill $HTTP_PID 2>/dev/null || true
-        # Дополнительная проверка и убийство по имени (на всякий случай)
-        pkill -9 -f "simple_ping_server.py" 2>/dev/null || true
-    else
-        # Если PID неизвестен, пробуем убить по имени
-        pkill -9 -f "simple_ping_server.py" 2>/dev/null || true
-    fi
-    # Убиваем фидер
-    if [[ -n "${FEEDER_PID:-}" ]]; then
-        kill $FEEDER_PID 2>/dev/null || true
-    fi
-    # Удаляем файлы
-    rm -f audio.fifo current_title.txt /tmp/simple_ping_server.py
-}
-# Устанавливаем trap для разных сигналов завершения
-trap cleanup EXIT INT TERM
-
-# Проверка mp3
+# ------------------------------------------------------------
+# 2. Проверка обязательных файлов
+# ------------------------------------------------------------
 if ! ls *.mp3 >/dev/null 2>&1; then
-  echo "Нет mp3-файлов в /radio"
-  exit 1
+    echo "Нет mp3-файлов в /radio"
+    exit 1
 fi
 
-# Запускаем сервер в фоне
-python3 /tmp/simple_ping_server.py &
-HTTP_PID=$!
-echo "mPid HTTP-сервера (для пинга): $HTTP_PID"
+if [ ! -f bg.jpg ]; then
+    echo "Создаю чёрный фон 1280x720..."
+    ffmpeg -y -f lavfi -i color=c=black:s=1280x720:r=1 -frames:v 1 bg.jpg
+fi
 
-# FIFO и файл текста
+if [ ! -f playlist_feeder.sh ]; then
+    echo "Отсутствует playlist_feeder.sh"
+    exit 1
+fi
+chmod +x playlist_feeder.sh
+
+# ------------------------------------------------------------
+# 3. HTTP‑сервер для health check (всегда отвечает 200)
+# ------------------------------------------------------------
+echo "mPid HTTP-сервера (для пинга): $$"   # чисто информационно
+python3 -c "
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import os
+port = int(os.environ.get('PORT', 10000))
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'OK')
+HTTPServer(('', port), H).serve_forever()
+" &
+HTTP_PID=$!
+
+trap "kill $HTTP_PID 2>/dev/null; rm -f audio.fifo current_title.txt; kill 0" EXIT
+echo "Health-check server запущен на порту $PORT"
+
+# ------------------------------------------------------------
+# 4. Подготовка FIFO и текстового файла
+# ------------------------------------------------------------
 rm -f audio.fifo
 mkfifo audio.fifo
 echo "" > current_title.txt
 
+# ------------------------------------------------------------
+# 5. Функция запуска фидера (возвращает PID)
+# ------------------------------------------------------------
+start_feeder() {
+    ./playlist_feeder.sh > audio.fifo 2>&1 &
+    echo $!
+}
+
+# ------------------------------------------------------------
+# 6. Основной цикл с авто-восстановлением
+# ------------------------------------------------------------
 echo "=== Запуск НЕПРЕРЫВНОГО радио ==="
 
-# Запуск фидера
-./playlist_feeder.sh > audio.fifo 2>"/tmp/feeder_$$.log" &
-FEEDER_PID=$!
+while true; do
+    # Запускаем фидер, если не работает
+    if ! kill -0 ${FEEDER_PID:-} 2>/dev/null; then
+        echo "Запуск playlist_feeder..."
+        FEEDER_PID=$(start_feeder)
+        sleep 2
+        if ! kill -0 $FEEDER_PID 2>/dev/null; then
+            echo "❌ Фидер не запустился, пробую снова через 5 сек..."
+            sleep 5
+            continue
+        fi
+    fi
 
-sleep 2
-if ! kill -0 $FEEDER_PID 2>/dev/null; then
-  echo "❌ Фидер не запустился, смотрите /tmp/feeder_$$.log"
-  exit 1
-fi
+    # Запускаем ffmpeg
+    echo "Запуск ffmpeg..."
+    ffmpeg -v warning -nostdin -y \
+        -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
+        -f s16le -ar 44100 -ac 2 -i audio.fifo \
+        -filter_complex \
+          "[0:v]scale=1280:720,drawtext=textfile=current_title.txt:reload=1:x=30:y=h-80:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:font='DejaVu Sans',format=yuv420p[video_out]" \
+        -map "[video_out]" -map 1:a \
+        -c:v libx264 -preset ultrafast -tune stillimage -b:v 1500k -maxrate 1500k -bufsize 3000k \
+        -pix_fmt yuv420p -g 2 \
+        -c:a aac -b:a 128k -ar 44100 \
+        -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}" 2>&1 | ts '[%Y-%m-%d %H:%M:%S]' &
+    FFMPEG_PID=$!
 
-# FFmpeg: Максимизация качества с минимальным запасом по трафику
-ffmpeg -v warning -nostdin -y \
-  -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
-  -f s16le -ar 44100 -ac 2 -i audio.fifo \
-  -filter_complex \
-    "[0:v]scale=1280:720,
-     drawtext=textfile=current_title.txt:reload=1:expansion=none:
-             x=30:y=h-80:fontsize=32:fontcolor=white:
-             box=1:boxcolor=black@0.5:boxborderw=10:font='DejaVu Sans',
-     format=yuv420p[video_out]" \
-  -map "[video_out]" -map 1:a \
-  -c:v libx264 -preset ultrafast -tune stillimage -b:v 300k -maxrate 330k -bufsize 660k \ # <-- Повышенные параметры битрейта, близко к пределу
-  -pix_fmt yuv420p -g 2 \
-  -c:a aac -b:a 64k -ar 44100 \
-  -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}" 2>"/tmp/ffmpeg_main_$$.log"
+    # Ждём падения любого из двух процессов
+    wait -n $FFMPEG_PID $FEEDER_PID || true
 
-echo "❌ FFmpeg остановлен (код $?), логи в /tmp/ffmpeg_main_$$.log" >&2
-# kill $FEEDER_PID 2>/dev/null || true # Уже делается в trap cleanup
+    # Прибиваем всё, что осталось
+    kill $FFMPEG_PID 2>/dev/null || true
+    kill $FEEDER_PID 2>/dev/null || true
+    wait $FFMPEG_PID 2>/dev/null || true
+    wait $FEEDER_PID 2>/dev/null || true
 
+    echo "⚠️ Процесс упал, перезапуск через 5 секунд..."
+    sleep 5
+done

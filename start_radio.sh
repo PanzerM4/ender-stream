@@ -4,17 +4,19 @@ set -e
 CD_DIR="/radio"
 cd "$CD_DIR"
 
+# Очистка старых процессов
 pkill -9 -f "ffmpeg" || true
 pkill -9 -f "http.server" || true
 
+# Проверка наличия mp3-файлов
 if ! ls *.mp3 >/dev/null 2>&1; then
   echo "Нет mp3-файлов в /radio"
   exit 1
 fi
 
-# Фон: если нет bg.jpg – создаём чёрный, иначе используем существующий
+# Создаём фон, если отсутствует
 if [ ! -f bg.jpg ]; then
-  echo "bg.jpg отсутствует, создаю чёрный фон..."
+  echo "Файл bg.jpg не найден, создаю чёрный фон 1920x1080..."
   ffmpeg -y -f lavfi -i color=c=black:s=1920x1080:r=1 -frames:v 1 bg.jpg 2>/dev/null
   if [ ! -f bg.jpg ]; then
     echo "ОШИБКА: не удалось создать bg.jpg"
@@ -22,6 +24,7 @@ if [ ! -f bg.jpg ]; then
   fi
 fi
 
+# HTTP-заглушка, чтобы Render не считал сервис упавшим
 PORT=${PORT:-10000}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
@@ -29,6 +32,9 @@ trap "kill $HTTP_PID 2>/dev/null" EXIT
 
 echo "=== Радио с плавными переходами и названиями треков ==="
 
+# --- Функции ---
+
+# Получает строку "Исполнитель - Название" или имя файла
 get_title() {
   local file="$1"
   artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
@@ -44,6 +50,7 @@ get_title() {
   fi | sed "s/'//g"
 }
 
+# Строит аудиофильтр acrossfade для цепочки из N треков
 build_acrossfade_filter() {
   local n=$1
   if [ "$n" -eq 1 ]; then
@@ -58,6 +65,8 @@ build_acrossfade_filter() {
   echo "$filter"
 }
 
+# Строит видеофильтр с отображением названий треков по времени
+# Аргументы: start1 end1 title1 start2 end2 title2 ...
 build_video_filter() {
   local args=("$@")
   local n=$(($# / 3))
@@ -74,6 +83,7 @@ build_video_filter() {
   echo "$filter"
 }
 
+# --- Главный цикл вещания ---
 while true; do
   echo "--- Формирую новый плейлист ---"
   mapfile -t ALL_MP3 < <(ls *.mp3 | shuf 2>/dev/null || ls *.mp3 | sort -R 2>/dev/null || ls *.mp3)
@@ -83,7 +93,7 @@ while true; do
     continue
   fi
 
-  TARGET_SEC=$((4*3600))
+  TARGET_SEC=$((4*3600))   # ~4 часа
   TOTAL_DUR=0
   PLAYLIST=()
   DURATIONS=()
@@ -103,6 +113,7 @@ while true; do
   n=${#PLAYLIST[@]}
   echo "Выбрано треков: $n, общая длительность: ${TOTAL_DUR} сек."
 
+  # Временные метки для названий (с учётом кроссфейда 3 сек)
   STARTS=()
   ENDS=()
   cum=${DURATIONS[0]}
@@ -121,6 +132,7 @@ while true; do
     VIDEO_ARGS+=("${STARTS[$i]}" "${ENDS[$i]}" "${TITLES[$i]}")
   done
 
+  # Входные файлы: картинка и все mp3
   INPUTS=("-f" "image2" "-loop" "1" "-r" "5" "-i" "bg.jpg")
   for f in "${PLAYLIST[@]}"; do
     INPUTS+=("-i" "$f")
@@ -130,8 +142,9 @@ while true; do
   VIDEO_FILTER=$(build_video_filter "${VIDEO_ARGS[@]}")
   FULL_FILTER="${AUDIO_FILTER}; ${VIDEO_FILTER}"
 
+  # Проверяем, задан ли ключ YouTube
   if [ -z "${YT_KEY}" ]; then
-    echo "ОШИБКА: переменная YT_KEY не задана"
+    echo "ОШИБКА: переменная окружения YT_KEY не задана"
     exit 1
   fi
 
@@ -143,7 +156,7 @@ while true; do
     -filter_complex "$FULL_FILTER" \
     -map "[video_out]" -map "[afinal]" \
     -r 30 \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 20 -b:v 1500k -maxrate 2000k -bufsize 4000k \
+    -c:v libx264 -preset ultrafast -tune stillimage -crf 18 -b:v 3000k -maxrate 3500k -bufsize 7000k \
     -pix_fmt yuv420p -g 60 \
     -c:a aac -b:a 128k -ar 44100 \
     -f flv "$RTMP_URL"

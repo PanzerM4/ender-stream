@@ -79,14 +79,14 @@ if ! kill -0 $FEEDER_PID 2>/dev/null; then
   exit 1
 fi
 
-# FFmpeg: снижен битрейт для экономии 100 ГБ трафика Render
+# FFmpeg: Баланс качества картинки и трафика
 ffmpeg -v warning -nostdin -y \
   -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
   -f s16le -ar 44100 -ac 2 -i audio.fifo \
   -filter_complex \
     "[0:v]scale=1280:720,drawtext=textfile=current_title.txt:reload=1:expansion=none:x=30:y=h-80:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:font='DejaVu Sans',format=yuv420p[video_out]" \
   -map "[video_out]" -map 1:a \
-  -c:v libx264 -preset ultrafast -tune stillimage -b:v 150k -maxrate 200k -bufsize 400k \
+  -c:v libx264 -preset ultrafast -tune stillimage -b:v 280k -maxrate 320k -bufsize 640k \ # <-- Новые параметры битрейта
   -pix_fmt yuv420p -g 2 \
   -c:a aac -b:a 64k -ar 44100 \
   -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}" 2>"/tmp/ffmpeg_main_$$.log"

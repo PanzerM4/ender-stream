@@ -22,7 +22,7 @@ python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-echo "=== Радио с названиями треков (24 fps, стабильный поток) ==="
+echo "=== Радио с названиями треков (Облегчённый поток) ==="
 
 get_title() {
   local file="$1"
@@ -100,13 +100,13 @@ while true; do
 
   echo "Запуск ffmpeg на ${RTMP_URL} ..."
   ffmpeg -v error -nostdin -y \
-    -re -f image2 -loop 1 -framerate 24 -i bg.jpg \
+    -f image2 -loop 1 -framerate 24 -i bg.jpg \
     -re -f concat -safe 0 -i "$PLAYLIST_FILE" \
     -filter_complex "$VIDEO_FILTER" \
     -map "[video_out]" -map 1:a \
     -r 24 \
-    -c:v libx264 -preset ultrafast \
-    -b:v 2500k -minrate 2500k -maxrate 2500k -bufsize 5000k \
+    -c:v libx264 -preset ultrafast -crf 23 \
+    -maxrate 2500k -bufsize 5000k \
     -pix_fmt yuv420p -g 48 \
     -c:a aac -b:a 128k -ar 44100 \
     -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 10 \

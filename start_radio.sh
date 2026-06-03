@@ -74,19 +74,14 @@ cleanup() {
         kill $FEEDER_PID 2>/dev/null || true
     fi
     # Удаляем файлы
-    rm -f audio.fifo current_title.txt processed_bg_temp.png /tmp/simple_ping_server.py
+    rm -f audio.fifo current_title.txt /tmp/simple_ping_server.py
 }
 # Устанавливаем trap для разных сигналов завершения
 trap cleanup EXIT INT TERM
 
-# Проверка mp3 и bg.jpg
+# Проверка mp3
 if ! ls *.mp3 >/dev/null 2>&1; then
   echo "Нет mp3-файлов в /radio"
-  exit 1
-fi
-
-if [ ! -f bg.jpg ]; then
-  echo "Нет bg.jpg в /radio"
   exit 1
 fi
 
@@ -100,13 +95,9 @@ rm -f audio.fifo
 mkfifo audio.fifo
 echo "" > current_title.txt
 
-echo "=== Подготовка фона с текстовым полем ==="
-# Создаём *один раз* фоновое изображение с полем для текста (но без текста)
-# Это будет наш "шаблон" кадра. Мы будем вставлять текст позже.
-ffmpeg -y -i bg.jpg -vf "scale=1280:720,drawtext=font='DejaVu Sans':fontsize=32:fontcolor=white:x=30:y=h-80:text='':box=1:boxcolor=black@0.5:boxborderw=10:enable='gt(t,0)'" -vframes 1 processed_bg_temp.png
+echo "=== Запуск НЕПРЕРЫВНОГО радио ==="
 
-# Запуск фидера ПОСЛЕ подготовки фона
-echo "=== Запуск НЕПРЕРЫВНОГО радио (с bg.jpg, стабильное качество) ==="
+# Запуск фидера
 ./playlist_feeder.sh > audio.fifo 2>"/tmp/feeder_$$.log" &
 FEEDER_PID=$!
 
@@ -116,25 +107,22 @@ if ! kill -0 $FEEDER_PID 2>/dev/null; then
   exit 1
 fi
 
-# FFmpeg: Используем подготовленный фон, накладываем текст, фиксированное качество (QP)
-# ВАЖНО: Используем QP (Quantizer Parameter) для фиксированного качества, а не битрейт
-# QP 18-28 обычно даёт высокое качество. QP 23 - сбалансировано. QP 20-22 - высокое.
-# QP работает в CBR режиме, обеспечивая стабильное визуальное качество.
-# Убираем tune stillimage и preset, так как они могут мешать QP.
-# Используем filter_complex для наложения текста на подготовленный фон
+# FFmpeg: Максимизация качества с минимальным запасом по трафику
+# Обратите внимание на правильное экранирование строк и разбиение на несколько строк
 ffmpeg -v warning -nostdin -y \
-  -re -f image2 -loop 1 -framerate 1 -i processed_bg_temp.png \ # Используем подготовленный фон
+  -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
   -f s16le -ar 44100 -ac 2 -i audio.fifo \
   -filter_complex \
-    "[0:v]drawtext=textfile=current_title.txt:reload=1:expansion=none:
-             font='DejaVu Sans':fontsize=32:fontcolor=white:
-             x=30:y=h-80:box=1:boxcolor=black@0.5:boxborderw=10:text='%{readfile:current_title.txt}':[video_out]" \
+    "[0:v]scale=1280:720,
+     drawtext=textfile=current_title.txt:reload=1:expansion=none:
+             x=30:y=h-80:fontsize=32:fontcolor=white:
+             box=1:boxcolor=black@0.5:boxborderw=10:font='DejaVu Sans',
+     format=yuv420p[video_out]" \
   -map "[video_out]" -map 1:a \
-  -c:v libx264 -qp 22 -max_muxing_queue_size 9999 \ # <-- Фиксированное качество (QP), отключаем битрейт
+  -c:v libx264 -preset ultrafast -tune stillimage -b:v 300k -maxrate 330k -bufsize 660k \
   -pix_fmt yuv420p -g 2 \
   -c:a aac -b:a 64k -ar 44100 \
   -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}" 2>"/tmp/ffmpeg_main_$$.log"
 
 echo "❌ FFmpeg остановлен (код $?), логи в /tmp/ffmpeg_main_$$.log" >&2
 # kill $FEEDER_PID 2>/dev/null || true # Уже делается в trap cleanup
-

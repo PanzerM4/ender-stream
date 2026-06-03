@@ -12,7 +12,7 @@ fi
 
 # Остановка старых процессов
 pkill -9 -f "ffmpeg" || true
-pkill -9 -f "http.server" || true
+pkill -9 -f "SimpleHTTPServerPing" || true # Убиваем старый пинг-сервер
 
 # Проверка mp3
 if ! ls *.mp3 >/dev/null 2>&1; then
@@ -20,11 +20,47 @@ if ! ls *.mp3 >/dev/null 2>&1; then
   exit 1
 fi
 
-# Фон-заглушка для Render (важно: bind 0.0.0.0, чтобы пингер извне мог достучаться)
+# --- НАЧАЛО: Запуск минимального HTTP-сервера для пинга ---
 PORT=${PORT:-10000}
-python3 -m http.server "$PORT" --bind 0.0.0.0 >/dev/null 2>&1 &
+
+# Создаем простой скрипт для HTTP-сервера
+cat << 'EOF' > /tmp/simple_ping_server.py
+import http.server
+import socketserver
+from http import HTTPStatus
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(HTTPStatus.OK)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK\n')
+
+    # Обработка других методов (POST, HEAD и т.д.) также возвращает 200 OK
+    def do_HEAD(self):
+        self.send_response(HTTPStatus.OK)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+
+    def do_POST(self):
+        self.do_GET() # Для пинга POST можно обрабатывать как GET
+
+    def log_message(self, format, *args):
+        # Отключаем логирование запросов для чистоты stdout
+        pass
+
+with socketserver.TCPServer(("", int(__import__('os').environ.get('PORT', 10000))), Handler) as httpd:
+    print(f"Ping server running on port {__import__('os').environ.get('PORT', 10000)}")
+    httpd.serve_forever()
+EOF
+
+# Запускаем сервер в фоне
+python3 /tmp/simple_ping_server.py &
 HTTP_PID=$!
-trap "kill $HTTP_PID 2>/dev/null || true; rm -f audio.fifo current_title.txt" EXIT
+echo "mPid HTTP-сервера (для пинга): $HTTP_PID"
+# --- КОНЕЦ: Запуск минимального HTTP-сервера для пинга ---
+
+trap "kill $HTTP_PID 2>/dev/null || true; rm -f audio.fifo current_title.txt; rm -f /tmp/simple_ping_server.py" EXIT
 
 # FIFO и файл текста
 rm -f audio.fifo
@@ -57,3 +93,4 @@ ffmpeg -v warning -nostdin -y \
 
 echo "❌ FFmpeg остановлен (код $?), логи в /tmp/ffmpeg_main_$$.log" >&2
 kill $FEEDER_PID 2>/dev/null || true
+

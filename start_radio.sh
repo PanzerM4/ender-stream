@@ -1,64 +1,46 @@
 #!/bin/bash
 set -e
 
-# Полное отключение интерактивного ввода на уровне самого ffmpeg
 export FFMPEG_FORCE_TEXT_STATUS=1
-
 CD_DIR="/radio"
 cd "$CD_DIR"
 
-# Очищаем старые процессы и кэш файлов
+# Мягкая остановка старых процессов
 pkill -9 -f "ffmpeg" || true
 pkill -9 -f "ffprobe" || true
 pkill -9 -f "http.server" || true
-rm -f audio_pipe metadata.txt
-mkfifo audio_pipe
-touch metadata.txt
+pkill -9 -f "playlist_feeder" || true   # если был запущен
 
-# Фоновая заглушка для Render
+# Заглушка для Render
 python3 -m http.server 10000 >/dev/null 2>&1 &
 
-# ФОНОВЫЙ ПРОЦЕСС: Вытаскивает названия и непрерывно гонит звук с подстраховкой тишиной
-(
-  while true; do
-    find . -maxdepth 1 -name "*.mp3" | shuf > shuffle_list.txt
-    while IFS= read -r track_path; do
-      # Читаем метаданные трека
-      artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
-      title=$(ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 "$track_path" 2>/dev/null </dev/null || echo "")
+# Проверка наличия mp3
+if ! ls *.mp3 >/dev/null 2>&1; then
+  echo "Нет mp3-файлов в /radio"
+  exit 1
+fi
 
-      artist=$(echo "$artist" | tr -d '\r\n')
-      title=$(echo "$title" | tr -d '\r\n')
+# Создаём FIFO (если уже есть — удаляем и пересоздаём)
+rm -f playlist.fifo
+mkfifo playlist.fifo
 
-      if [ -n "$artist" ] && [ -n "$title" ]; then
-          display_name="$artist — $title"
-      else
-          display_name=$(basename "$track_path" .mp3 | sed 's/[_-]/ /g')
-      fi
+# Запускаем генератор плейлистов в фоне
+./playlist_feeder.sh > playlist.fifo &
+FEEDER_PID=$!
+trap "kill $FEEDER_PID 2>/dev/null; rm -f playlist.fifo" EXIT
 
-      echo "$display_name" > metadata.txt
-      echo "NOW_PLAYING: $display_name"
+echo "Запуск непрерывного радио со сменой плейлиста каждые ~4 часа..."
 
-      # Флаг -re здесь синхронизирует скорость декодера с реальным временем (1.0x), чтобы буфер не переполнялся
-      ffmpeg -v error -nostdin -re -i "$track_path" -f lavfi -i anullsrc=r=44100:cl=stereo \
-        -filter_complex "[0:a][1:a]amix=inputs=2:duration=first,aresample=async=1[aout]" \
-        -map "[aout]" -f wav -ar 44100 -ac 2 -y audio_pipe </dev/null || true
-    done < shuffle_list.txt
-  done
-) &
-
-# ГЛАВНЫЙ ПРОЦЕСС: Стрим в высоком качестве HD 720p со скоростью строго 1.0x
-while true; do
-  echo "Запуск HD-трансляции на YouTube..."
-
-  # Прямая ссылка БЕЗ ПЕРЕМЕННЫХ И СКЛЕЕК. Полностью защищена от сбоев кэша браузера.
-  ffmpeg -v error -nostdin -y \
-    -re -loop 1 -r 1 -i bg.jpg \
-    -re -f wav -i audio_pipe \
-    -vf "scale=1280:720,drawtext=fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf:textfile=metadata.txt:reload=1:x=(w-tw)/2:y=h-80:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=12" \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 26 -b:v 1200k -maxrate 1200k -bufsize 2400k \
-    -pix_fmt yuv420p -g 2 -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://://youtube.com${YOUTUBE_KEY:-4ux7-0ay8-816w-cxrb-1j24}" < /dev/
-
-  echo "Переподключение потока через 3 секунды..."
-  sleep 3
+ffmpeg -v error -nostdin -y \
+  -loop 1 -r 5 -i bg.jpg \
+  -re -f concat -safe 0 -i playlist.fifo \
+  -filter_complex \
+    "[1:a]acrossfade=d=3:c1=tri:c2=tri,asplit[audio_out][audio_vis]; \
+     [audio_vis]showwaves=s=1280x80:mode=cline:colors=white@0.6:r=5[waves]; \
+     [0:v]scale=1280:720[bg]; \
+     [bg][waves]overlay=x=0:y=H-h[v_waves]; \
+     [v_waves]drawtext=text='RADIO LIVE':x=30:y=h-130:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:fontfile=/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf[video_out]" \
+  -map "[video_out]" -map "[audio_out]" \
+  -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 800k -maxrate 800k -bufsize 1600k \
+  -pix_fmt yuv420p -g 10 -c:a aac -b:a 128k -ar 44100 \
+  -f flv "rtmp://a.rtmp.youtube.com/live2/${4ux7-0ay8-816w-cxrb-1j24}

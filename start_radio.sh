@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 CD_DIR="/radio"
 cd "$CD_DIR"
@@ -14,27 +14,32 @@ if ! ls *.mp3 >/dev/null 2>&1; then
   exit 1
 fi
 
-# Фон-заглушка для Render (Render требует порт)
+# Фон-заглушка для Render
 PORT=${PORT:-10000}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
-trap "kill $HTTP_PID 2>/dev/null; rm -f audio.fifo current_title.txt" EXIT
+trap "kill $HTTP_PID 2>/dev/null || true; rm -f audio.fifo current_title.txt" EXIT
 
-# Создаём FIFO для звука
+# FIFO и файл текста
 rm -f audio.fifo
 mkfifo audio.fifo
-
-# Файл с названием трека (сначала пустой)
 echo "" > current_title.txt
 
-echo "=== Запуск НЕПРЕРЫВНОГО радио (плейлист обновляется каждые ~4 часа) ==="
+echo "=== Запуск НЕПРЕРЫВНОГО радио (логирование включено) ==="
 
-# Запускаем фидер (он будет писать в FIFO)
-./playlist_feeder.sh > audio.fifo &
+# Запуск фидера с логированием в файл
+./playlist_feeder.sh > audio.fifo 2>"/tmp/feeder_$$.log" &
 FEEDER_PID=$!
 
-# FFmpeg: видео из статичной картинки с обновляемым текстом, аудио из FIFO
-ffmpeg -v error -nostdin -y \
+# Ждём появления данных в FIFO (если фидер не стартует — выход)
+sleep 2
+if ! kill -0 $FEEDER_PID 2>/dev/null; then
+  echo "❌ Фидер не запустился, смотрите /tmp/feeder_$$.log"
+  exit 1
+fi
+
+# FFmpeg с чуть более подробным выводом
+ffmpeg -v warning -nostdin -y \
   -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
   -f s16le -ar 44100 -ac 2 -i audio.fifo \
   -filter_complex \
@@ -43,8 +48,7 @@ ffmpeg -v error -nostdin -y \
   -c:v libx264 -preset ultrafast -tune stillimage -b:v 1500k -maxrate 1500k -bufsize 3000k \
   -pix_fmt yuv420p -g 2 \
   -c:a aac -b:a 128k -ar 44100 \
-  -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}"
+  -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}" 2>"/tmp/ffmpeg_main_$$.log"
 
-# Сюда попадаем только если FFmpeg упал (ошибка)
-kill $FEEDER_PID 2>/dev/null
-echo "FFmpeg остановлен – проверьте логи и перезапустите."
+echo "❌ FFmpeg остановлен (код $?), логи в /tmp/ffmpeg_main_$$.log и /tmp/feeder_$$.log" >&2
+kill $FEEDER_PID 2>/dev/null || true

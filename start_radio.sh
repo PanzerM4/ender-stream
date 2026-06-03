@@ -20,6 +20,7 @@ fi
 PORT=${PORT:-10000}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
+sleep 2   # гарантируем, что порт откроется до проверки Render
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
 echo "=== Радио с названиями треков (Облегчённый поток) ==="

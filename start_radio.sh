@@ -22,7 +22,7 @@ python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-echo "=== Радио с названиями треков (CBR + nal-hrd) ==="
+echo "=== Радио с названиями треков (CBR + Noise) ==="
 
 get_title() {
   local file="$1"
@@ -85,7 +85,7 @@ while true; do
     VIDEO_FILTER+="; [${prev}]drawtext=text='${title}':x=30:y=h-80:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:enable='between(t,${s},${e})'[txt${i}]"
     prev="txt${i}"
   done
-  VIDEO_FILTER+="; [${prev}]format=yuv420p[video_out]"
+  VIDEO_FILTER+="; [${prev}]format=yuv420p,noise=alls=2:allf=t[video_out]"
 
   PLAYLIST_FILE="playlist_$$.txt"
   for f in "${PLAYLIST[@]}"; do
@@ -100,14 +100,13 @@ while true; do
 
   echo "Запуск ffmpeg на ${RTMP_URL} ..."
   ffmpeg -v error -nostdin -y \
-    -f image2 -loop 1 -r 5 -i bg.jpg \
+    -f image2 -loop 1 -framerate 30 -i bg.jpg \
     -re -f concat -safe 0 -i "$PLAYLIST_FILE" \
     -filter_complex "$VIDEO_FILTER" \
     -map "[video_out]" -map 1:a \
     -r 30 \
     -c:v libx264 -preset ultrafast \
     -b:v 3000k -minrate 3000k -maxrate 3000k -bufsize 6000k \
-    -x264-params "nal-hrd=cbr:force-cfr=1" \
     -pix_fmt yuv420p -g 60 \
     -c:a aac -b:a 128k -ar 44100 \
     -f flv "$RTMP_URL"

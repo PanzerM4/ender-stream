@@ -24,90 +24,143 @@ python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-echo "=== Радио с плавными переходами ==="
+echo "=== Радио с плавными переходами и названиями треков ==="
 
-# Функция: построить filter_complex для N аудиофайлов
-# Параметр: количество аудиовходов (не включая видео)
+# --- Вспомогательные функции ---
+
+# Получить название трека (тег title или имя файла)
+get_title() {
+  local file="$1"
+  title=$(ffprobe -v error -show_entries format_tags=title -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
+  if [ -z "$title" ]; then
+    title=$(basename "$file" .mp3)
+    title=${title//_/ }
+  fi
+  # Убираем одиночные кавычки, чтобы не сломать drawtext
+  title=${title//\'/}
+  echo "$title"
+}
+
+# Построить аудиофильтр acrossfade (точно как в рабочем скрипте)
 build_acrossfade_filter() {
   local n=$1
   if [ "$n" -eq 1 ]; then
-    # Один трек — кроссфейд не нужен
     echo "[1:a]anull[afinal]"
     return
   fi
 
-  # Первый переход: [1:a][2:a]acrossfade=d=3:c1=tri:c2=tri[a1]
   local filter="[1:a][2:a]acrossfade=d=3:c1=tri:c2=tri[a1]"
   local i
   for ((i=3; i<=n; i++)); do
     local prev=$((i-2))
     filter+="; [a${prev}][${i}:a]acrossfade=d=3:c1=tri:c2=tri[a$((i-1))]"
   done
-  # Последний выход назовём afinal
   filter+="; [a$((n-1))]anull[afinal]"
   echo "$filter"
 }
 
-# Главный бесконечный цикл
+# Построить видеофильтр с названиями треков
+# Аргументы: start1 end1 title1 start2 end2 title2 ...
+build_video_filter() {
+  local args=("$@")
+  local n=$(($# / 3))
+  
+  local filter="[0:v]scale=1280:720[bg]"
+  local prev="bg"
+  for ((i=0; i<n; i++)); do
+    local s="${args[$((i*3))]}"
+    local e="${args[$((i*3+1))]}"
+    local title="${args[$((i*3+2))]}"
+    local enable_str="between(t,${s},${e})"
+    local label="txt${i}"
+    filter+="; [${prev}]drawtext=text='${title}':x=30:y=h-80:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:enable='${enable_str}'[${label}]"
+    prev="${label}"
+  done
+  filter+="; [${prev}]format=yuv420p[video_out]"
+  echo "$filter"
+}
+
+# --- Главный бесконечный цикл ---
 while true; do
   echo "--- Формирую новый плейлист ---"
 
-  # Собираем список всех mp3, перемешиваем
-  mapfile -t ALL_MP3 < <(ls *.mp3 | shuf)
+  # Перемешиваем mp3
+  mapfile -t ALL_MP3 < <(ls *.mp3 | shuf 2>/dev/null || ls *.mp3 | sort -R 2>/dev/null || ls *.mp3)
   if [ ${#ALL_MP3[@]} -eq 0 ]; then
     echo "Нет mp3 файлов!"
     sleep 10
     continue
   fi
 
-  # Определяем, сколько треков взять для ~4 часов вещания
   TARGET_SEC=$((4*3600))   # 4 часа в секундах
   TOTAL_DUR=0
   PLAYLIST=()
+  DURATIONS=()
+  TITLES=()
+
   for f in "${ALL_MP3[@]}"; do
-    # Длительность трека через ffprobe
     DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null || echo 0)
-    DUR=${DUR%.*}   # отбросить дробную часть (секунды целые)
-    TOTAL_DUR=$((TOTAL_DUR + DUR))
+    DUR=${DUR%.*}   # целые секунды
+    if [ "$DUR" -le 0 ]; then continue; fi
     PLAYLIST+=("$f")
+    DURATIONS+=("$DUR")
+    TITLES+=("$(get_title "$f")")
+    TOTAL_DUR=$((TOTAL_DUR + DUR))
     if [ $TOTAL_DUR -ge $TARGET_SEC ]; then
       break
     fi
   done
 
-  echo "Выбрано ${#PLAYLIST[@]} треков, общая длительность ~${TOTAL_DUR} сек."
+  n=${#PLAYLIST[@]}
+  echo "Выбрано треков: $n, общая длительность: ${TOTAL_DUR} сек."
 
-  # Строим список входов для ffmpeg: видео + аудиофайлы
+  # Рассчитываем времена начала/конца для каждого названия (с учётом кроссфейда 3 сек)
+  STARTS=()
+  ENDS=()
+  local cum=${DURATIONS[0]}
+  STARTS[0]=0
+  ENDS[0]=$cum
+
+  for ((i=1; i<n; i++)); do
+    STARTS[$i]=$(( cum - i * 3 ))        # начало i-го трека (наложение кроссфейда)
+    ENDS[$((i-1))]=${STARTS[$i]}        # конец предыдущего = начало текущего
+    cum=$(( cum + DURATIONS[i] ))
+  done
+  TOTAL_TIME=$(( cum - (n-1) * 3 ))     # общая длительность склеенного аудио
+  ENDS[$((n-1))]=$TOTAL_TIME
+
+  # Формируем список аргументов для видеофильтра: start1 end1 title1 ...
+  VIDEO_ARGS=()
+  for ((i=0; i<n; i++)); do
+    VIDEO_ARGS+=("${STARTS[$i]}" "${ENDS[$i]}" "${TITLES[$i]}")
+  done
+
+  # Входы для ffmpeg: картинка + все треки
   INPUTS=("-loop" "1" "-r" "5" "-i" "bg.jpg")
   for f in "${PLAYLIST[@]}"; do
     INPUTS+=("-i" "$f")
   done
 
-  # Число аудио входов = длина плейлиста
-  N_AUDIO=${#PLAYLIST[@]}
+  # Строим фильтры
+  AUDIO_FILTER=$(build_acrossfade_filter $n)
+  VIDEO_FILTER=$(build_video_filter "${VIDEO_ARGS[@]}")
 
-  # Генерируем видео-часть фильтра (волны + текст)
-  VIDEO_FILTER="[0:v]scale=1280:720[bg]; \
-                [afinal]asplit[audio_out][audio_vis]; \
-                [audio_vis]showwaves=s=1280x80:mode=cline:colors=white@0.6:r=5[waves]; \
-                [bg][waves]overlay=x=0:y=H-h[v_waves]; \
-                [v_waves]drawtext=text='RADIO LIVE':x=30:y=h-130:fontsize=24:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10[video_out]"
+  FULL_FILTER="${AUDIO_FILTER}; ${VIDEO_FILTER}"
 
-  # Аудио-кроссфейд
-  ACROSSFADE_FILTER=$(build_acrossfade_filter $N_AUDIO)
-
-  FULL_FILTER="${ACROSSFADE_FILTER}; ${VIDEO_FILTER}"
+  # RTMP URL
+  YT_KEY="${YT_KEY:-4ux7-0ay8-816w-cxrb-1j24}"   # <-- замени на свой ключ
+  RTMP_URL="rtmp://a.rtmp.youtube.com/live2/${YT_KEY}"
 
   echo "Запуск ffmpeg..."
   ffmpeg -v error -nostdin -y \
     "${INPUTS[@]}" \
     -filter_complex "$FULL_FILTER" \
-    -map "[video_out]" -map "[audio_out]" \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 30 -b:v 800k -maxrate 800k -bufsize 1600k \
+    -map "[video_out]" -map "[afinal]" \
+    -c:v libx264 -preset ultrafast -tune stillimage -crf 20 -b:v 1500k -maxrate 2000k -bufsize 4000k \
     -pix_fmt yuv420p -g 10 \
     -c:a aac -b:a 128k -ar 44100 \
-    -f flv "rtmp://a.rtmp.youtube.com/live2/4ux7-0ay8-816w-cxrb-1j24"
+    -f flv "$RTMP_URL"
 
-  echo "FFmpeg остановлен. Пересоздание плейлиста через 5 секунд..."
+  echo "FFmpeg остановлен. Перезапуск через 5 секунд..."
   sleep 5
 done

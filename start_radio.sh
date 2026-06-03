@@ -11,23 +11,17 @@ PORT=${PORT:-10000}
 # ------------------------------------------------------------
 free_port() {
   echo "🔧 Освобождаю порт $PORT..."
-  # Ищем PID, который слушает этот порт
-  local pid
   if command -v fuser &>/dev/null; then
     fuser -k ${PORT}/tcp 2>/dev/null || true
   elif command -v lsof &>/dev/null; then
-    pid=$(lsof -ti:${PORT} 2>/dev/null || true)
-    if [ -n "$pid" ]; then
-      kill -9 $pid 2>/dev/null || true
-    fi
+    lsof -ti:${PORT} | xargs -r kill -9
   fi
-  # Также убиваем все известные нам процессы на всякий случай
   pkill -9 -f "ffmpeg" || true
   pkill -9 -f "python3" || true
   pkill -9 -f "http.server" || true
   pkill -9 -f "playlist_feeder" || true
   sleep 2
-  # Проверяем, что порт свободен
+  # Ждём, пока порт реально освободится
   while command -v lsof &>/dev/null && lsof -i:${PORT} 2>/dev/null | grep -q LISTEN; do
     echo "⏳ Порт ещё занят, жду..."
     sleep 2
@@ -59,7 +53,7 @@ fi
 chmod +x playlist_feeder.sh
 
 # ------------------------------------------------------------
-# 3. HTTP‑сервер для health check
+# 3. HTTP‑сервер для health check (всегда отвечает 200)
 # ------------------------------------------------------------
 echo "🌐 Запускаю health-check сервер на порту $PORT..."
 python3 -c "
@@ -79,7 +73,7 @@ trap "kill $HTTP_PID 2>/dev/null; rm -f audio.fifo current_title.txt; kill 0" EX
 echo "✅ Health-check server PID: $HTTP_PID"
 
 # ------------------------------------------------------------
-# 4. FIFO и текущее название
+# 4. FIFO и текстовый файл для названий
 # ------------------------------------------------------------
 rm -f audio.fifo
 mkfifo audio.fifo
@@ -110,7 +104,7 @@ while true; do
   fi
   echo "✅ Фидер работает (PID $FEEDER_PID)"
 
-  # Запускаем ffmpeg
+  # Запускаем ffmpeg (БИТРЕЙТ AAC УВЕЛИЧЕН ДО 256k)
   echo "🎬 Запускаю ffmpeg..."
   ffmpeg -v warning -nostdin -y \
     -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
@@ -120,7 +114,7 @@ while true; do
     -map "[video_out]" -map 1:a \
     -c:v libx264 -preset ultrafast -tune stillimage -b:v 1500k -maxrate 1500k -bufsize 3000k \
     -pix_fmt yuv420p -g 2 \
-    -c:a aac -b:a 128k -ar 44100 \
+    -c:a aac -b:a 256k -ar 44100 \
     -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}" 2>&1 | ts '[%Y-%m-%d %H:%M:%S]' &
   FFMPEG_PID=$!
   echo "✅ FFmpeg PID: $FFMPEG_PID"

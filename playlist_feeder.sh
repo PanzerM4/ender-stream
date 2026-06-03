@@ -1,14 +1,14 @@
 #!/bin/bash
-# playlist_feeder.sh – непрерывный источник звука и названий треков
+# playlist_feeder.sh – непрерывный звук + плавное обновление названий треков
 # Запускать: ./playlist_feeder.sh > audio.fifo
 
 CD_DIR="/radio"
 cd "$CD_DIR"
 
 TITLE_FILE="current_title.txt"
-DURATION_TARGET=$((4 * 3600))  # 4 часа в секундах
+DURATION_TARGET=$((4 * 3600))  # 4 часа
 
-# Функция получения названия (как у вас)
+# Функция получения названия (без изменений)
 get_title() {
   local file="$1"
   artist=$(ffprobe -v error -show_entries format_tags=artist -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
@@ -24,12 +24,11 @@ get_title() {
   fi | sed "s/'//g"
 }
 
-# Собираем все mp3 с длительностями
+# Собираем все mp3 с длительностями (дробными)
 declare -A DURATIONS
 FILES=()
 while IFS= read -r -d '' f; do
   dur=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null || echo 0)
-  # Пропускаем файлы с нулевой длительностью
   if (( $(echo "$dur <= 0" | bc -l) )); then
     continue
   fi
@@ -42,33 +41,77 @@ if [ ${#FILES[@]} -eq 0 ]; then
   exit 1
 fi
 
-# Бесконечный цикл: генерируем блоки
+# Бесконечный цикл блоков
 while true; do
-  # Перемешиваем файлы
+  # --- Генерация блока ---
   mapfile -t SHUFFLED < <(printf '%s\n' "${FILES[@]}" | shuf)
 
   total=0
-  block=()
+  block_files=()
+  block_titles=()
+  block_starts=()
+  block_ends=()
+
   for f in "${SHUFFLED[@]}"; do
     dur="${DURATIONS[$f]}"
-    total=$(echo "$total + $dur" | bc -l)
-    block+=("$f")
+    total_after=$(echo "$total + $dur" | bc -l)
+    block_files+=("$f")
+    block_titles+=("$(get_title "$f")")
+    block_starts+=("$total")
+    block_ends+=("$total_after")
+    total=$total_after
     if (( $(echo "$total >= $DURATION_TARGET" | bc -l) )); then
       break
     fi
   done
 
-  echo "Новый блок: ${#block[@]} треков, длительность $(printf "%.0f" "$total") сек." >&2
+  n=${#block_files[@]}
+  echo "Новый блок: $n треков, длительность $(printf "%.0f" "$total") сек." >&2
 
-  # Проигрываем блок (пишем PCM в stdout)
-  for f in "${block[@]}"; do
-    # Записываем название трека в файл (текст сразу появится на экране)
-    get_title "$f" > "$TITLE_FILE"
+  # Запоминаем абсолютное время старта этого блока
+  BLOCK_START=$(date +%s.%N)
 
-    # Декодируем mp3 в сырой PCM (s16le, 44100, stereo) и выводим в stdout
+  # --- Запускаем фоновый планировщик обновления текста ---
+  (
+    for ((i=0; i<n; i++)); do
+      title="${block_titles[$i]}"
+      start="${block_starts[$i]}"
+      end="${block_ends[$i]}"
+
+      # Время появления (за 5 сек до начала трека)
+      show_time=$(echo "$BLOCK_START + $start - 5" | bc -l)
+      # Время исчезновения (через 5 сек после конца трека)
+      hide_time=$(echo "$BLOCK_START + $end + 5" | bc -l)
+
+      # Ждём до show_time (если оно ещё не прошло)
+      now=$(date +%s.%N)
+      wait_show=$(echo "$show_time - $now" | bc -l)
+      if (( $(echo "$wait_show > 0" | bc -l) )); then
+        sleep "$wait_show"
+      fi
+      # Показываем название (если файл существует, перезаписываем)
+      echo "$title" > "$TITLE_FILE"
+
+      # Ждём до hide_time
+      now=$(date +%s.%N)
+      wait_hide=$(echo "$hide_time - $now" | bc -l)
+      if (( $(echo "$wait_hide > 0" | bc -l) )); then
+        sleep "$wait_hide"
+      fi
+      # Очищаем текст (пустая строка)
+      echo "" > "$TITLE_FILE"
+    done
+  ) &
+  TEXT_PID=$!
+
+  # --- Основной поток: выдаём PCM без задержек ---
+  for f in "${block_files[@]}"; do
     ffmpeg -v error -i "$f" -f s16le -acodec pcm_s16le -ar 44100 -ac 2 - 2>/dev/null
-
-    # Когда трек закончился, цикл переходит к следующему – без пауз
   done
-  # Блок завершён, сразу начинаем генерировать следующий (без разрыва в FIFO)
+
+  # Блок закончился, убиваем фоновый планировщик (на случай, если остались несработанные события)
+  kill $TEXT_PID 2>/dev/null
+  wait $TEXT_PID 2>/dev/null
+
+  # И сразу переходим к следующему блоку (без паузы)
 done

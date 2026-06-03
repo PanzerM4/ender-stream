@@ -4,35 +4,32 @@ set -e
 CD_DIR="/radio"
 cd "$CD_DIR"
 
-# Остановка старых процессов
 pkill -9 -f "ffmpeg" || true
 pkill -9 -f "http.server" || true
 
-# Проверки mp3
 if ! ls *.mp3 >/dev/null 2>&1; then
   echo "Нет mp3-файлов в /radio"
   exit 1
 fi
 
-# --- АВТО-СОЗДАНИЕ ФОНА, ЕСЛИ bg.jpg НЕ JPEG ---
-if [ ! -f bg.jpg ]; then
-  echo "bg.jpg отсутствует, создаю чёрный фон..."
-  ffmpeg -y -f lavfi -i color=c=black:s=1920x1080:r=1 -frames:v 1 bg.jpg
-elif ! head -c 3 bg.jpg | grep -q $'\xff\xd8\xff'; then
-  echo "bg.jpg не является JPEG, заменяю его на чёрный фон..."
-  ffmpeg -y -f lavfi -i color=c=black:s=1920x1080:r=1 -frames:v 1 bg.jpg
+# Проверка и авто-создание фона (оставляем, хуже не будет)
+if [ -f bg.jpg ]; then
+  SIG=$(head -c 3 bg.jpg | xxd -p)
+  if [ "$SIG" != "ffd8ff" ]; then
+    echo "ВНИМАНИЕ: bg.jpg не JPEG (сигнатура $SIG), создаю чёрный фон"
+    rm -f bg.jpg
+  fi
 fi
-echo "Фон готов."
+if [ ! -f bg.jpg ]; then
+  ffmpeg -y -f lavfi -i color=c=black:s=1920x1080:r=1 -frames:v 1 bg.jpg 2>/dev/null
+fi
 
-# HTTP-заглушка для Render
 PORT=${PORT:-10000}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
 echo "=== Радио с плавными переходами и названиями треков ==="
-
-# --- Функции ---
 
 get_title() {
   local file="$1"
@@ -79,7 +76,6 @@ build_video_filter() {
   echo "$filter"
 }
 
-# --- Главный цикл ---
 while true; do
   echo "--- Формирую новый плейлист ---"
   mapfile -t ALL_MP3 < <(ls *.mp3 | shuf 2>/dev/null || ls *.mp3 | sort -R 2>/dev/null || ls *.mp3)
@@ -127,19 +123,18 @@ while true; do
     VIDEO_ARGS+=("${STARTS[$i]}" "${ENDS[$i]}" "${TITLES[$i]}")
   done
 
-  INPUTS=("-loop" "1" "-r" "5" "-i" "bg.jpg")
+  # Явно указываем формат image2 для bg.jpg
+  INPUTS=("-f" "image2" "-loop" "1" "-r" "5" "-i" "bg.jpg")
   for f in "${PLAYLIST[@]}"; do
     INPUTS+=("-i" "$f")
   done
 
   AUDIO_FILTER=$(build_acrossfade_filter $n)
   VIDEO_FILTER=$(build_video_filter "${VIDEO_ARGS[@]}")
-
   FULL_FILTER="${AUDIO_FILTER}; ${VIDEO_FILTER}"
 
-  # Проверяем ключ YouTube
   if [ -z "${YT_KEY}" ]; then
-    echo "ОШИБКА: переменная YT_KEY не задана. Укажи стрим-ключ в окружении Render."
+    echo "ОШИБКА: переменная YT_KEY не задана"
     exit 1
   fi
 

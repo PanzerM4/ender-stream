@@ -100,7 +100,7 @@ while true; do
 
   echo "Запуск ffmpeg на ${RTMP_URL} ..."
   ffmpeg -v error -nostdin -y \
-    -re -f image2 -loop 1 -framerate 30 -i bg.jpg \
+    -f image2 -loop 1 -r 5 -i bg.jpg \
     -re -f concat -safe 0 -i "$PLAYLIST_FILE" \
     -filter_complex "$VIDEO_FILTER" \
     -map "[video_out]" -map 1:a \

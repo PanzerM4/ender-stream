@@ -23,7 +23,7 @@ HTTP_PID=$!
 sleep 2
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-echo "=== Радио с названиями треков (10→24 fps, облегчённый) ==="
+echo "=== Радио с названиями треков (стабильный, 1 fps, качество 1500k) ==="
 
 get_title() {
   local file="$1"
@@ -77,7 +77,7 @@ while true; do
   fi
   echo "Выбрано треков: $n, общая длительность: ${TOTAL_TIME} сек."
 
-  # Фильтр с текстом (применяется к 10 кадрам/с)
+  # Фильтр с текстом (накладывается на 1 кадр/с)
   VIDEO_FILTER="[0:v]scale=1280:720[bg]"
   prev="bg"
   for ((i=0; i<n; i++)); do
@@ -102,17 +102,13 @@ while true; do
 
   echo "Запуск ffmpeg на ${RTMP_URL} ..."
   ffmpeg -v error -nostdin -y \
-    -f image2 -loop 1 -framerate 10 -i bg.jpg \
+    -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
     -re -f concat -safe 0 -i "$PLAYLIST_FILE" \
     -filter_complex "$VIDEO_FILTER" \
     -map "[video_out]" -map 1:a \
-    -r 24 -vsync 2 \
-    -c:v libx264 -preset ultrafast -tune stillimage -crf 23 \
-    -maxrate 2500k -bufsize 5000k \
-    -pix_fmt yuv420p -g 48 \
+    -c:v libx264 -preset ultrafast -tune stillimage -b:v 1500k -maxrate 1500k -bufsize 3000k \
+    -pix_fmt yuv420p -g 2 \
     -c:a aac -b:a 128k -ar 44100 \
-    -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 10 \
-    -rtmp_live live \
     -f flv "$RTMP_URL"
 
   rm -f "$PLAYLIST_FILE"

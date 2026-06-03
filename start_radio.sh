@@ -13,17 +13,17 @@ if ! ls *.mp3 >/dev/null 2>&1; then
 fi
 
 if [ ! -f bg.jpg ]; then
-  echo "Файл bg.jpg не найден, создаю чёрный фон 1920x1080..."
-  ffmpeg -y -f lavfi -i color=c=black:s=1920x1080:r=1 -frames:v 1 bg.jpg 2>/dev/null
+  echo "Файл bg.jpg не найден, создаю чёрный фон 1280x720..."
+  ffmpeg -y -f lavfi -i color=c=black:s=1280x720:r=1 -frames:v 1 bg.jpg 2>/dev/null
 fi
 
 PORT=${PORT:-10000}
 python3 -m http.server "$PORT" >/dev/null 2>&1 &
 HTTP_PID=$!
-sleep 2   # гарантируем, что порт откроется до проверки Render
+sleep 2
 trap "kill $HTTP_PID 2>/dev/null" EXIT
 
-echo "=== Радио с названиями треков (Облегчённый поток) ==="
+echo "=== Радио (Без нагрузки) ==="
 
 get_title() {
   local file="$1"
@@ -40,53 +40,24 @@ get_title() {
   fi | sed "s/'//g"
 }
 
-generate_playlist_and_timings() {
-  local target_sec=$1
-  local total_dur=0
-  PLAYLIST=()
-  STARTS=()
-  ENDS=()
-  TITLES=()
+while true; do
+  echo "--- Формирую плейлист (~4 часа) ---"
+  TARGET_SEC=$((4*3600))
 
   mapfile -t ALL_MP3 < <(ls *.mp3 | shuf 2>/dev/null || ls *.mp3 | sort -R 2>/dev/null || ls *.mp3)
+  PLAYLIST=()
+  TOTAL_DUR=0
 
   for f in "${ALL_MP3[@]}"; do
     DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null || echo 0)
     DUR=${DUR%.*}
     [ "$DUR" -le 0 ] && continue
     PLAYLIST+=("$f")
-    TITLES+=("$(get_title "$f")")
-    STARTS+=("$total_dur")
-    total_dur=$((total_dur + DUR))
-    ENDS+=("$total_dur")
-    [ $total_dur -ge $target_sec ] && break
+    TOTAL_DUR=$((TOTAL_DUR + DUR))
+    [ $TOTAL_DUR -ge $TARGET_SEC ] && break
   done
-  TOTAL_TIME=$total_dur
-}
 
-while true; do
-  echo "--- Формирую новый плейлист (~4 часа) ---"
-  TARGET_SEC=$((4*3600))
-  generate_playlist_and_timings $TARGET_SEC
-
-  n=${#PLAYLIST[@]}
-  if [ $n -eq 0 ]; then
-    echo "Нет mp3 файлов!"
-    sleep 10
-    continue
-  fi
-  echo "Выбрано треков: $n, общая длительность: ${TOTAL_TIME} сек."
-
-  VIDEO_FILTER="[0:v]scale=1280:720[bg]"
-  prev="bg"
-  for ((i=0; i<n; i++)); do
-    s="${STARTS[$i]}"
-    e="${ENDS[$i]}"
-    title="${TITLES[$i]}"
-    VIDEO_FILTER+="; [${prev}]drawtext=text='${title}':x=30:y=h-80:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.5:boxborderw=10:enable='between(t,${s},${e})'[txt${i}]"
-    prev="txt${i}"
-  done
-  VIDEO_FILTER+="; [${prev}]format=yuv420p[video_out]"
+  echo "Треков: ${#PLAYLIST[@]}, длительность: ${TOTAL_DUR} сек."
 
   PLAYLIST_FILE="playlist_$$.txt"
   for f in "${PLAYLIST[@]}"; do
@@ -99,21 +70,30 @@ while true; do
   fi
   RTMP_URL="rtmp://a.rtmp.youtube.com/live2/${YT_KEY}"
 
-  echo "Запуск ffmpeg на ${RTMP_URL} ..."
+  # Запускаем ffmpeg в фоне, чтобы параллельно выводить названия
+  echo "Запуск ffmpeg..."
   ffmpeg -v error -nostdin -y \
-    -f image2 -loop 1 -framerate 24 -i bg.jpg \
+    -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
     -re -f concat -safe 0 -i "$PLAYLIST_FILE" \
-    -filter_complex "$VIDEO_FILTER" \
-    -map "[video_out]" -map 1:a \
-    -r 24 \
-    -c:v libx264 -preset ultrafast -crf 23 \
-    -maxrate 2500k -bufsize 5000k \
-    -pix_fmt yuv420p -g 48 \
+    -map 0:v -map 1:a \
+    -c:v libx264 -preset ultrafast -tune stillimage -b:v 500k -maxrate 500k -bufsize 1000k \
+    -pix_fmt yuv420p -g 2 \
     -c:a aac -b:a 128k -ar 44100 \
-    -reconnect 1 -reconnect_at_eof 1 -reconnect_streamed 1 -reconnect_delay_max 10 \
-    -rtmp_live live \
-    -f flv "$RTMP_URL"
+    -f flv "$RTMP_URL" &
+  FFMPEG_PID=$!
 
+  # Пока работает ffmpeg, выводим названия треков (в будущем можно отправлять в API YouTube)
+  for f in "${PLAYLIST[@]}"; do
+    if ! kill -0 $FFMPEG_PID 2>/dev/null; then
+      break
+    fi
+    TITLE=$(get_title "$f")
+    echo "Сейчас играет: $TITLE"
+    DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null || echo 0)
+    sleep ${DUR%.*}
+  done
+
+  wait $FFMPEG_PID 2>/dev/null
   rm -f "$PLAYLIST_FILE"
   echo "FFmpeg остановлен. Перезапуск через 5 секунд..."
   sleep 5

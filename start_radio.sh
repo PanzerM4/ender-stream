@@ -36,12 +36,11 @@ get_title() {
     title=$(basename "$file" .mp3)
     title=${title//_/ }
   fi
-  # Убираем одиночные кавычки, чтобы не сломать drawtext
   title=${title//\'/}
   echo "$title"
 }
 
-# Построить аудиофильтр acrossfade (точно как в рабочем скрипте)
+# Построить аудиофильтр acrossfade (как в рабочем скрипте)
 build_acrossfade_filter() {
   local n=$1
   if [ "$n" -eq 1 ]; then
@@ -92,7 +91,7 @@ while true; do
     continue
   fi
 
-  TARGET_SEC=$((4*3600))   # 4 часа в секундах
+  TARGET_SEC=$((4*3600))
   TOTAL_DUR=0
   PLAYLIST=()
   DURATIONS=()
@@ -100,7 +99,7 @@ while true; do
 
   for f in "${ALL_MP3[@]}"; do
     DUR=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$f" 2>/dev/null || echo 0)
-    DUR=${DUR%.*}   # целые секунды
+    DUR=${DUR%.*}
     if [ "$DUR" -le 0 ]; then continue; fi
     PLAYLIST+=("$f")
     DURATIONS+=("$DUR")
@@ -114,28 +113,28 @@ while true; do
   n=${#PLAYLIST[@]}
   echo "Выбрано треков: $n, общая длительность: ${TOTAL_DUR} сек."
 
-  # Рассчитываем времена начала/конца для каждого названия (с учётом кроссфейда 3 сек)
+  # Рассчитываем времена начала/конца для названий (с учётом кроссфейда 3 сек)
   STARTS=()
   ENDS=()
-  local cum=${DURATIONS[0]}
+  cum=${DURATIONS[0]}            # <-- исправлено: убран local
   STARTS[0]=0
   ENDS[0]=$cum
 
   for ((i=1; i<n; i++)); do
-    STARTS[$i]=$(( cum - i * 3 ))        # начало i-го трека (наложение кроссфейда)
-    ENDS[$((i-1))]=${STARTS[$i]}        # конец предыдущего = начало текущего
+    STARTS[$i]=$(( cum - i * 3 ))
+    ENDS[$((i-1))]=${STARTS[$i]}
     cum=$(( cum + DURATIONS[i] ))
   done
-  TOTAL_TIME=$(( cum - (n-1) * 3 ))     # общая длительность склеенного аудио
+  TOTAL_TIME=$(( cum - (n-1) * 3 ))
   ENDS[$((n-1))]=$TOTAL_TIME
 
-  # Формируем список аргументов для видеофильтра: start1 end1 title1 ...
+  # Аргументы для видеофильтра
   VIDEO_ARGS=()
   for ((i=0; i<n; i++)); do
     VIDEO_ARGS+=("${STARTS[$i]}" "${ENDS[$i]}" "${TITLES[$i]}")
   done
 
-  # Входы для ffmpeg: картинка + все треки
+  # Входы: картинка + треки
   INPUTS=("-loop" "1" "-r" "5" "-i" "bg.jpg")
   for f in "${PLAYLIST[@]}"; do
     INPUTS+=("-i" "$f")

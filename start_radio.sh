@@ -108,6 +108,7 @@ if ! kill -0 $FEEDER_PID 2>/dev/null; then
 fi
 
 # FFmpeg: Максимизация качества с минимальным запасом по трафику
+# Обратите внимание на правильное экранирование строк и разбиение на несколько строк
 ffmpeg -v warning -nostdin -y \
   -re -f image2 -loop 1 -framerate 1 -i bg.jpg \
   -f s16le -ar 44100 -ac 2 -i audio.fifo \
@@ -118,11 +119,10 @@ ffmpeg -v warning -nostdin -y \
              box=1:boxcolor=black@0.5:boxborderw=10:font='DejaVu Sans',
      format=yuv420p[video_out]" \
   -map "[video_out]" -map 1:a \
-  -c:v libx264 -preset ultrafast -tune stillimage -b:v 300k -maxrate 330k -bufsize 660k \ # <-- Повышенные параметры битрейта, близко к пределу
+  -c:v libx264 -preset ultrafast -tune stillimage -b:v 300k -maxrate 330k -bufsize 660k \
   -pix_fmt yuv420p -g 2 \
   -c:a aac -b:a 64k -ar 44100 \
   -f flv "rtmp://a.rtmp.youtube.com/live2/${YT_KEY}" 2>"/tmp/ffmpeg_main_$$.log"
 
 echo "❌ FFmpeg остановлен (код $?), логи в /tmp/ffmpeg_main_$$.log" >&2
 # kill $FEEDER_PID 2>/dev/null || true # Уже делается в trap cleanup
-
